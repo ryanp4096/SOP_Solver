@@ -287,8 +287,9 @@ void print_workdone()
 
     long double total_global_work_done = 0;
     // Total global work done
-
-    total_global_work_done = gp_const - gp_remaining - 31 + total_work_done;
+    // get num of threads from the work remaing vector
+    int num_threads = work_remaining.size();
+    total_global_work_done = gp_const - gp_remaining - num_threads + total_work_done;
 
     std::cout << "Total global work done: " << total_global_work_done << std::endl;
     // Calculate the percentage of work done
