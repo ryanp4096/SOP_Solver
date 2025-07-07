@@ -983,13 +983,14 @@ void solver::enumerate()
 
                 // triming
                 int source_node = problem_state.current_path.back();
+                int edge_weight = cost_graph[source_node][taken_node].weight; // Cache the weight lookup
                 int lower_bound = -1;
                 bool taken = false;
 
                 problem_state.current_path.push_back(taken_node);
                 problem_state.history_key.first[taken_node] = true;
                 problem_state.history_key.second = taken_node;
-                problem_state.current_cost += cost_graph[source_node][taken_node].weight;
+                problem_state.current_cost += edge_weight; // Use cached value
 
                 HistoryNode *his_node = NULL;
                 // Active_Node* active_node = NULL;
@@ -997,7 +998,7 @@ void solver::enumerate()
                 if (problem_state.current_cost >= best_cost)
                 { // backtracking
                     pruned_count++;
-                    prune(source_node, taken_node);
+                    prune(source_node, taken_node, edge_weight);
                     continue;
                 }
 
@@ -1032,7 +1033,7 @@ void solver::enumerate()
                     }
 
                     pruned_count++;
-                    prune(source_node, taken_node);
+                    prune(source_node, taken_node, edge_weight);
                     continue;
                 }
 
@@ -1100,7 +1101,7 @@ void solver::enumerate()
                     // tracking the pruning at current depth
                     // history_table_pruning_success[problem_state.current_path.size()]++;
                     pruned_count++;
-                    prune(source_node, taken_node);
+                    prune(source_node, taken_node, edge_weight);
                     continue;
                 }
 
@@ -1114,14 +1115,14 @@ void solver::enumerate()
                             his_node->explored = true;
                     }
                     pruned_count++;
-                    prune(source_node, taken_node);
+                    prune(source_node, taken_node, edge_weight);
                     continue;
                 }
                 //"good" node, add it to the ready_list, then reset problem state
                 path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
                 ready_list.push_back(temp);
                 problem_state.current_path.pop_back();
-                problem_state.current_cost -= cost_graph[source_node][taken_node].weight;
+                problem_state.current_cost -= edge_weight; // Use cached value
                 problem_state.history_key.first[taken_node] = false;
                 problem_state.history_key.second = source_node;
             }
@@ -1176,8 +1177,12 @@ void solver::enumerate()
             problem_state.current_path.push_back(taken_node);
             problem_state.taken_arr[taken_node] = true;
             problem_state.current_cost += cost_graph[src][taken_node].weight;
-            for (int vertex : dependency_graph[taken_node])
+            
+            // Cache dependency list to avoid repeated vector access
+            const auto& dependencies = dependency_graph[taken_node];
+            for (int vertex : dependencies)
                 problem_state.depCnt[vertex]--;
+                
             problem_state.history_key.first[taken_node] = true;
             problem_state.history_key.second = taken_node;
             problem_state.hungarian_solver.fix_row(src, taken_node);
@@ -1198,7 +1203,7 @@ void solver::enumerate()
             problem_state.hungarian_solver.undue_column(taken_node, src);
             problem_state.history_key.first[taken_node] = false;
             problem_state.history_key.second = src;
-            for (int vertex : dependency_graph[taken_node])
+            for (int vertex : dependencies) // Reuse cached dependency list
                 problem_state.depCnt[vertex]++;
             problem_state.current_cost -= cost_graph[src][taken_node].weight;
             problem_state.taken_arr[taken_node] = false;
@@ -1626,17 +1631,12 @@ bool solver::enumeration_pre_check(path_node &active_node)
     return false;
 }
 
-void solver::prune(int source_node, int taken_node)
+void solver::prune(int source_node, int taken_node, int edge_weight)
 {
-    // DIAGNOSTIC: view path
-    // std::cout << "Pruning node " << taken_node << endl;
-    //  if (enable_progress_estimation)
-    //      estimated_trimmed_percent[thread_id] += dest.current_node_value; //add the value of this node you are trimming
-
-    problem_state.current_path.pop_back();
-    problem_state.current_cost -= cost_graph[source_node][taken_node].weight;
-    problem_state.history_key.first[taken_node] = false;
-    problem_state.history_key.second = source_node;
+    problem_state.current_path.pop_back();              // Undo temporary path addition
+    problem_state.current_cost -= edge_weight;          // Undo temporary cost addition  
+    problem_state.history_key.first[taken_node] = false; // Undo temporary history key
+    problem_state.history_key.second = source_node;     // Undo temporary history key
 }
 
 int solver::dynamic_hungarian(int src, int dst)

@@ -145,7 +145,7 @@ private:
         Return - true if the node was discarded, false if its subspace must still be enumerated */
     bool enumeration_pre_check(path_node &active_node);
     /*called when pruning a node in enumerate*/
-    void prune(int source_node, int taken_node);
+    void prune(int source_node, int taken_node, int edge_weight);
 
     /* Computes a dynamic lower bound based on the previous path with this node added, using the MCPM relaxation.
         Contains the fix and undue calls internally.
