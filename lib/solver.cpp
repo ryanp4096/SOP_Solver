@@ -33,7 +33,7 @@ static bool is_all_table_blocked = false;
 static bool enable_workstealing = false;
 static bool enable_threadstop = false;
 static bool enable_lkh = true;
-static bool enable_heuristic = false;
+static bool enable_heuristic = false; // heuristic to treat multiple history table as one single history table when the global pool is empty (because when the pool is empty we are exploring deeper in the tree and keeping the bottom tables would be helpful)
 // static bool enable_progress_estimation = false;
 
 // derived attributes
@@ -131,9 +131,8 @@ bool local_searchinit = true;
 bool initial_LKHRun = true;
 
 // below variables is for sharing LKH best tour
-pthread_mutex_t PrintLock = PTHREAD_MUTEX_INITIALIZER; // Lock for BestTour and flag
-int best_cost_temp = INT_MAX;                          // Temporary variable to store best cost at the time of copying
-float last_updated_at = 0;
+int best_cost_temp = INT_MAX; // Temporary variable to store best cost at the time of copying
+float last_updated_time_by_LKH = 0;
 
 // bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
@@ -267,6 +266,11 @@ void solver::assign_parameter(vector<string> setting)
     }
     std::cout << "Blocking mem limit = " << mem_limit << std::endl;
 
+    enable_heuristic = (setting[14] == "1");
+    if (enable_heuristic)
+        std::cout << "Heuristic to treat multiple history table as one single history table is enabled" << std::endl;
+    else
+        std::cout << "Heuristic to treat multiple history table as one single history table is disabled" << std::endl;
     return;
 }
 void print_workdone()
@@ -769,107 +773,6 @@ void solver::solve_parallel()
     return;
 }
 
-/**
- * @brief Process the best tour found by LKH and print it if it has not been processed yet.
- *
- * This function is called by each thread to process the best tour found by LKH. If the best cost has changed,
- * it means a new tour has been found and it needs to be processed. The best tour is copied to a local variable
- * and the flag isBestTourProcessed is set to true to mark it as processed. The local copy of the tour is then
- * processed outside the critical section. If the best cost has not changed, it means the tour has already been
- * processed by another thread and a message is printed to indicate that.
- */
-
-// void solver::processBestTour()
-// {
-
-//     // No need to lock BestTourLock until we need to check the flag
-//     // Only proceed if BB_SolFound is false
-//     if (BestCost > 0 && BestCost <= best_cost)
-//     {
-//        std::cout << "intiating localbest tour" << endl;
-//         int *localBestTour = nullptr;
-//         //std::cout << "started processBestTour by thread : " << thread_id << " = " << endl;
-//         // Lock Sol_lock to ensure LKH is not updating BestTour while we're copying it
-//         pthread_mutex_lock(&Sol_lock);
-//         if (BB_SolFound)
-//         {
-//             pthread_mutex_unlock(&Sol_lock);
-//             return;
-//         }
-//         // Check if the best cost has changed, meaning a new tour has been found
-//         if (BestCost < best_cost_temp)
-//         {
-//            std::cout << "updating best cost temp" << endl;
-//             // Update temporary cost and reset flag so this tour gets printed
-//             best_cost_temp = BestCost;
-//             isBestTourProcessed = false;
-//         }
-
-//         // If the best tour is not processed yet, process it
-//         if (!isBestTourProcessed)
-//         {
-//             //std::cout << "Best Cost----: " << BestCost << endl;
-//             //std::cout << "Dimension: " << Dimension << endl;
-//             //std::cout << "instance_size: " << instance_size << endl;
-
-//             // Copy BestTour to a local variable
-//             // pthread_mutex_lock(&PrintLock);
-
-//             localBestTour = new int[instance_size]; // Create a local copy of the tour
-//             for (int i = 1; i <= instance_size; i++)
-//             {
-//                 localBestTour[i] = BestTour[i]; // Copy the tour
-//             }
-
-//             // pthread_mutex_unlock(&PrintLock);
-
-//             // for (int i = 1; i <= instance_size; i++)
-//             // {
-//             //     std::cout << localBestTour[i] << " ";
-//             // }
-//             // std::cout << std::endl;
-
-//             // Mark BestTour as processed
-//             isBestTourProcessed = true;
-//         }
-
-//         // Unlock Sol_lock after copying BestTour and best_cost
-//         pthread_mutex_unlock(&Sol_lock);
-
-//         // Now use the PrintLock to ensure only one thread prints the tour at a time
-//         // pthread_mutex_lock(&PrintLock);
-//         // Process the local copy of BestTour outside the critical section
-//         if (localBestTour != nullptr)
-//         {
-//            std::cout << "starting printing best tour by thread : " << thread_id << endl;
-//             if (best_cost_temp == BestCost)
-//             {
-//                 std::cout << "Processing Best Tour with cost: " << best_cost_temp << std::endl;
-//                 for (int i = 1; i <= instance_size; i++)
-//                 {
-//                     std::cout << localBestTour[i] << " ";
-//                 }
-//                 std::cout << std::endl;
-//             }
-//             else
-//             {
-//                 // The tour is outdated, a better one was found
-//                 std::cout << "The best cost has changed, a new tour has been found." << std::endl;
-//             }
-//             // Clean up the local copy
-
-//            std::cout << "start cleaning up the local copy" << endl;
-//             delete[] localBestTour;
-//            std::cout << "cleaned up the local copy" << endl;
-//         }
-//         else
-//             std::cout << "Best tour has already been processed by another thread: " << thread_id << std::endl;
-
-//         // Release the PrintLock after printing
-//         // pthread_mutex_unlock(&PrintLock);
-//     }
-// }
-
 void rotateTourToStartFromNode1(int *tour, int size)
 {
     int start_index = 0;
@@ -922,7 +825,6 @@ void solver::processBestTour()
         if (BB_SolFound)
         {
             pthread_mutex_unlock(&Sol_lock);
-            pthread_mutex_unlock(&PrintLock);
             return;
         }
 
@@ -1028,7 +930,6 @@ void solver::processBestTour()
         // {
         //    std::cout << "Prefix path (" << src << " to " << dst << ") not found in the history table." << std::endl;
         // }
-        std::cout << "Unlocked the PrintLock" << endl;
         isProcessingBestTour.store(false);
     }
 }
@@ -1040,15 +941,15 @@ void solver::enumerate()
         if (!BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
         {
             // last updated best cost is not by LKH or LKH has not updated anything yet
-            if (last_updated_at == 0)
+            if (last_updated_time_by_LKH == 0)
             {
-                last_updated_at = lkh_timer.get_time_seconds();
-                std::cout << "setting last updated at " << last_updated_at << endl;
+                last_updated_time_by_LKH = lkh_timer.get_time_seconds();
+                std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
             }
             else
             {
                 // std::cout << "here " << endl;
-                if (lkh_timer.get_time_seconds() - last_updated_at > 100)
+                if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > 100)
                 {
                     // If another thread is already processing, return immediately
                     bool expected = false;
