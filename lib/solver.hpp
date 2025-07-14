@@ -92,6 +92,11 @@ private:
 
     int instance_size = -1;  // number of nodes in the graph, including virtual starting and ending nodes ("real" nodes would be instance_size - 2)
     sop_state problem_state; // this thread's current state
+    
+    // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
+    // Safe because each thread gets its own solver instance
+    std::deque<path_node> ready_list;
+    
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
 

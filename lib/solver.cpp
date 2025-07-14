@@ -973,7 +973,8 @@ void solver::enumerate()
         int ready_node_count = 0;
         int pruned_count = 0;
 
-        deque<path_node> ready_list;
+        // Reuse member variable to avoid allocation/deallocation overhead
+        ready_list.clear();
         // bool limit_insertion = false;
         for (int taken_node = 0; taken_node < instance_size; taken_node++)
         {
