@@ -92,6 +92,11 @@ private:
 
     int instance_size = -1;  // number of nodes in the graph, including virtual starting and ending nodes ("real" nodes would be instance_size - 2)
     sop_state problem_state; // this thread's current state
+    
+    // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
+    // Safe because each thread gets its own solver instance
+    std::deque<path_node> ready_list;
+    
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
 
@@ -145,7 +150,7 @@ private:
         Return - true if the node was discarded, false if its subspace must still be enumerated */
     bool enumeration_pre_check(path_node &active_node);
     /*called when pruning a node in enumerate*/
-    void prune(int source_node, int taken_node);
+    void prune(int source_node, int taken_node, int edge_weight);
 
     /* Computes a dynamic lower bound based on the previous path with this node added, using the MCPM relaxation.
         Contains the fix and undue calls internally.

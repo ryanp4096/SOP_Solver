@@ -83,7 +83,7 @@ extern int best_cost;
 extern int* bestBB_tour;
 extern bool BB_Complete;
 extern int best_cost_temp;
-extern float last_updated_at;
+extern float last_updated_time_by_LKH;
 extern bool BB_SolFound;
 
 /* The Node structure is used to represent nodes (cities) of the problem */
