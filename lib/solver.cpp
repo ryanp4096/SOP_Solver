@@ -55,7 +55,11 @@ static History_Table history_table(TABLE_SIZE);           // the history table
 static vector<path_node> global_pool;                     // a global pool of nodes that haven't yet been processed by any thread, only ever take from the back
 static local_pool *local_pools;                           // each thread's local pool, with the internal tools to manage them, only ever take from the back
 static vector<atomic<unsigned long long>> work_remaining; // used for work stealing, hold an estimate of how much work is left for a thread to do
+static vector<atomic<float>> time_taken;
 
+static vector<atomic<int>> lower_bounds_per_thread;
+static vector<string> prefix_per_thread;
+float last_updated_at;
 ///////////Synchronization Variables/////
 // pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;   //lock for any updates to best_solution and its cost
 static mutex best_solution_lock;
@@ -170,10 +174,14 @@ bool local_pool_sort(const path_node &src, const path_node &dest) { return src.l
 
 static double gp_const;     // store the total work in the global pool initially
 static double gp_remaining; // variable to store the number of remaining work from global pool
-
+std::atomic<bool> stop_LKH{false};
+std::atomic<bool> is_first_lkh_thred_use{true};
+/*
 void lkh()
 {
-    while (!BB_Complete)
+    auto start = std::chrono::steady_clock::now();
+
+    while (!BB_Complete && !stop_LKH)
     {
         LKH(&filename[0], initial_LKHRun);
         if (initial_LKHRun)
@@ -181,11 +189,51 @@ void lkh()
             initial_LKHRun = false;
         }
         BB_SolFound = false;
-        // TODO: add entries to the history table corresponding to the LKH solution
-    }
-    return;
-}
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - start).count() >= 200 || BB_Complete)
+        {
+            std::cout << "Time at LKH = " << chrono::duration_cast<std::chrono::seconds>(now - start).count() << std::endl;
 
+            stop_LKH = true;
+            break;
+        }
+    }
+
+    return;
+}*/
+
+void lkh()
+{
+    using namespace std::chrono;
+
+    auto start = steady_clock::now();
+    last_updated_at == 0.0f;
+
+    while (!BB_Complete && !stop_LKH)
+    {
+        LKH(&filename[0], initial_LKHRun);
+        if (initial_LKHRun)
+        {
+            initial_LKHRun = false;
+        }
+
+        BB_SolFound = false;
+        auto now = steady_clock::now();
+        float elapsed_since_start = duration<float>(now - start).count();
+
+        if (last_updated_at == 0.0f)
+        {
+            last_updated_at = elapsed_since_start;
+            std::cout << "setting last updated at " << last_updated_at << " seconds" << std::endl;
+        }
+        else if (elapsed_since_start - last_updated_at > 50.0f)
+        {
+            std::cout << "Time at LKH = " << elapsed_since_start << " seconds" << std::endl;
+            stop_LKH = true;
+            break;
+        }
+    }
+}
 void print_diagnostics()
 {
     if (main_timer.get_time_seconds() > diagonstics_targetTime)
@@ -376,8 +424,8 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Instance size is " << instance_size - 2 << std::endl;
 
     // thread_load = new load_stats [thread_total];
-    local_pools = new local_pool(thread_total);
-    history_table.initialize(thread_total, TABLE_SIZE, number_of_groups, bucket_size);
+    local_pools = new local_pool(thread_total + 1);
+    history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
     // {
@@ -401,20 +449,20 @@ void solver::solve(string f_name, int thread_num)
     // enumerated_nodes = vector<unsigned_long_64>(thread_total);
     // estimated_trimmed_percent = vector<unsigned long long>(thread_total,0);
 
-    bestBB_tour = new int[instance_size];
+    bestBB_tour = new int[instance_size]; // + 1
     for (int i = 0; i < instance_size; i++)
         bestBB_tour[i] = best_solution[i] + 1;
 
-    if (enable_lkh)
-        LKH_thread = thread(lkh);
+    // if (enable_lkh)
+    //     LKH_thread = thread(lkh);
 
     auto start_time = chrono::high_resolution_clock::now();
     solve_parallel();
     auto end_time = chrono::high_resolution_clock::now();
 
-    if (enable_lkh)
-        if (LKH_thread.joinable())
-            LKH_thread.join();
+    // if (enable_lkh)
+    //     if (LKH_thread.joinable())
+    //         LKH_thread.join();
 
     // DIAGNOSTIC : Enumerated Nodes
     unsigned long long enumerated_nodes_sum = 0;
@@ -425,7 +473,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Total enumerated nodes: " << enumerated_nodes_sum << endl;
 
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    std::cout << "------------------------" << thread_total << " thread"
+    std::cout << "------------------------" << thread_num << " thread"
               << "------------------------------" << std::endl;
     std::cout << "thread stop requested: " << thread_stop_requested << "\n";
     std::cout << "thread stop check: " << thread_stop_check << "\n";
@@ -533,9 +581,9 @@ void solver::solve_parallel()
 {
     main_timer.restart();
 
-    vector<solver> solvers(thread_total);
+    vector<solver> solvers(thread_total + 1);
     deque<sop_state> *solver_container;
-    vector<thread> Thread_manager(thread_total);
+    vector<thread> Thread_manager(thread_total + 1);
 
     /* Begin splitting nodes of the enumeration tree until GPQ has reached a minimum size. */
     vector<node> ready_list;
@@ -742,25 +790,75 @@ void solver::solve_parallel()
             }
         }
     }
+    // Dignositc code start
+    lower_bounds_per_thread = std::vector<std::atomic<int>>(thread_cnt + 1);
+    prefix_per_thread = std::vector<std::string>(thread_cnt + 1);
 
-    work_remaining = std::vector<std::atomic<unsigned long long>>(thread_cnt); // PROGRESS initializing work remaining vector
-    enumerated_nodes = std::vector<unsigned long long>(thread_cnt);
-    for (int i = 0; i < thread_cnt; i++)
+    for (int i = 0; i < thread_cnt; ++i)
+    {
+        // Store lower bound
+        lower_bounds_per_thread[i] = static_cast<int>(solvers[i].problem_state.lower_bound);
+
+        // Convert prefix path to string
+        std::ostringstream oss;
+        for (int node : solvers[i].problem_state.current_path)
+        {
+            oss << node << " ";
+        }
+        prefix_per_thread[i] = oss.str();
+    }
+    lower_bounds_per_thread[thread_cnt] = -1;
+    prefix_per_thread[thread_cnt] = "first time here";
+
+    // dignostic code end
+    //
+
+    work_remaining = std::vector<std::atomic<unsigned long long>>(thread_cnt + 1); // PROGRESS initializing work remaining vector
+    // time_taken = std::vector<std::atomic<float>>(thread_cnt + 1);
+    enumerated_nodes = std::vector<unsigned long long>(thread_cnt + 1);
+    float current_time = main_timer.get_time_seconds();
+    for (int i = 0; i < thread_cnt + 1; i++)
     {
         work_remaining[i] = ULLONG_MAX;
+        // time_taken[i] = current_time;
         enumerated_nodes[i] = 0;
     }
+    work_remaining[thread_cnt] = 0;
+    // current_time = main_timer.get_time_seconds();
+    // time_taken[thread_cnt] = current_time;
 
+    std::cout << "thread total " << thread_total << "\n";
+    // launch 31 threads for parallel solver
     for (int i = 0; i < thread_total; i++)
     {
+        std::cout << "Starting thread " << i << "\n";
         Thread_manager[i] = thread(&solver::enumerate, move(solvers[i]));
         active_threads++;
     }
+    // use the LKH thread for LKH
+    std::cout << "Launching LKH thread\n";
+    std::thread lkh_thread(lkh);
+
+    lkh_thread.join();
+    std::cout << "LKH finished\n";
+
+    // if b&b not complete use this thread there
+    std::cout << "assigning lkh thread as " << thread_cnt;
+
+    solvers[thread_cnt].problem_state = default_state;
+    solvers[thread_cnt].thread_id = thread_cnt;
+    solvers[thread_cnt].instance_size = instance_size;
+
+    Thread_manager[thread_cnt] = thread(&solver::enumerate, move(solvers[thread_cnt]));
+    active_threads++;
+    thread_total++;
+
     for (int i = 0; i < thread_total; i++)
     { // waits until every thread is finished
         if (Thread_manager[i].joinable())
         {
             Thread_manager[i].join();
+            std::cout << "Thread " << i << " joined\n";
         }
     }
     active_threads = 0;
@@ -816,7 +914,8 @@ void rotateTourToStartFromNode1(int *tour, int size)
 }
 void solver::processBestTour()
 {
-    std::cout << "intiating localbest tour" << endl;
+    std::cout << "[processBestTour] Initiating local best tour" << std::endl;
+    best_cost_temp = best_cost;
 
     if (best_cost_temp == best_cost)
     {
@@ -842,7 +941,7 @@ void solver::processBestTour()
         for (int i = 0; i <= instance_size; i++)
             localBestTour[i] = BestTour[i]; // Copy the tour
 
-        std::cout << "Processing Best Tour with cost: " << total_cost << std::endl;
+        std::cout << "[processBestTour] Processing Best Tour with cost: " << total_cost << std::endl;
         numberOfTimesLKHPathProcessed++;
         // Release Sol_lock after copying
         pthread_mutex_unlock(&Sol_lock);
@@ -933,42 +1032,28 @@ void solver::processBestTour()
         // }
         isProcessingBestTour.store(false);
     }
+    else
+    {
+        std::cout << "[processBestTour] Skipped: best_cost_temp (" << best_cost_temp
+                  << ") != best_cost (" << best_cost << ")" << std::endl;
+    }
 }
 
 void solver::enumerate()
 {
+    if (thread_id == 31 && is_first_lkh_thred_use)
+    {
+        std::cout << "processing best tour" << std::endl;
+
+        processBestTour();
+        std::cout << "workload request" << std::endl;
+
+        is_first_lkh_thred_use = false;
+        if (!workload_request()) // end if there is no more work
+            return;
+    }
     while (!time_out)
     {
-        if (!BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
-        {
-            // last updated best cost is not by LKH or LKH has not updated anything yet
-            if (last_updated_time_by_LKH == 0)
-            {
-                last_updated_time_by_LKH = lkh_timer.get_time_seconds();
-                std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
-            }
-            else
-            {
-                // std::cout << "here " << endl;
-                if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > 100)
-                {
-                    // If another thread is already processing, return immediately
-                    bool expected = false;
-                    if (isProcessingBestTour.compare_exchange_strong(expected, true))
-                    {
-                        processBestTour();
-                    }
-                }
-            }
-        }
-        // std::cout << "lkh timer: " << lkh_timer.get_time_seconds() << endl;
-        // std::cout << "main timer: " << lkh_timer.get_time_seconds() << endl;
-        //  if (main_timer.get_time_seconds() > 10 && best_cost_temp != INT_MAX && !BB_SolFound)
-        //  {
-        //      processBestTour();
-        //  }
-        //  if (main_timer.get_time_seconds() > 3598)
-        //      local_pools->print_top_sequence_sizes_end(thread_total);
 
         // PROGRESS variables
         int ready_node_count = 0;
@@ -1179,12 +1264,12 @@ void solver::enumerate()
             problem_state.current_path.push_back(taken_node);
             problem_state.taken_arr[taken_node] = true;
             problem_state.current_cost += cost_graph[src][taken_node].weight;
-            
+
             // Cache dependency list to avoid repeated vector access
-            const auto& dependencies = dependency_graph[taken_node];
+            const auto &dependencies = dependency_graph[taken_node];
             for (int vertex : dependencies)
                 problem_state.depCnt[vertex]--;
-                
+
             problem_state.history_key.first[taken_node] = true;
             problem_state.history_key.second = taken_node;
             problem_state.hungarian_solver.fix_row(src, taken_node);
@@ -1635,10 +1720,10 @@ bool solver::enumeration_pre_check(path_node &active_node)
 
 void solver::prune(int source_node, int taken_node, int edge_weight)
 {
-    problem_state.current_path.pop_back();              // Undo temporary path addition
-    problem_state.current_cost -= edge_weight;          // Undo temporary cost addition  
+    problem_state.current_path.pop_back();               // Undo temporary path addition
+    problem_state.current_cost -= edge_weight;           // Undo temporary cost addition
     problem_state.history_key.first[taken_node] = false; // Undo temporary history key
-    problem_state.history_key.second = source_node;     // Undo temporary history key
+    problem_state.history_key.second = source_node;      // Undo temporary history key
 }
 
 int solver::dynamic_hungarian(int src, int dst)
@@ -1757,6 +1842,8 @@ static int stolen_from;
 // WORKSTEALING
 bool solver::workload_request()
 {
+    // if (thread_id == 31)
+
     if (thread_requests[thread_id].has_request)
     {
         thread_requests[thread_id].lock.lock();
@@ -1777,6 +1864,24 @@ bool solver::workload_request()
         global_pool_lock.lock();
         if (!global_pool.empty())
         {
+            // float now = main_timer.get_time_seconds();
+            // float start_time = time_taken[thread_id].load();
+            // float elapsed = now - start_time;
+            //
+            //// Reset the timer for the thread
+            // time_taken[thread_id] = now;
+            //
+            //// lowerbound printing,
+            // int lb = lower_bounds_per_thread[thread_id];
+            // std::string prefix_str;
+            //
+            // prefix_str = prefix_per_thread[thread_id];
+            //
+            // std::cout << "[ " << thread_id << " ] Entered workload_request and GP not empty at time "
+            //          << now << " (Primary subspace solved in " << elapsed << " seconds) | Lower Bound : " << lb
+            //          << " | Prefix: "
+            //          << prefix_str
+            //          << "\n";
             problem_state = generate_solver_state(global_pool.back());
             local_pools->set_pool_depth(thread_id, 0);
             global_pool.pop_back();
@@ -1804,6 +1909,25 @@ bool solver::workload_request()
         }
         global_pool_lock.unlock();
     }
+    // if (time_taken[thread_id] != -1)
+    //{
+    //     float now = main_timer.get_time_seconds();
+    //     float start_time = time_taken[thread_id].load();
+    //     float elapsed = now - start_time;
+    //
+    //    std::cout << "[ " << thread_id << " ] Entered workload_request and GP empty at time "
+    //              << now << " (Primary subspace solved in " << elapsed << " seconds)\n";
+    //    time_taken[thread_id] = -1;
+    //
+    //    // lowerbound printing,
+    //    int lb = lower_bounds_per_thread[thread_id];
+    //    std::string prefix_str;
+    //
+    //    prefix_str = prefix_per_thread[thread_id];
+    //
+    //    std::cout << "[ " << thread_id << " ] Originally assigned LB: " << lb
+    //              << " | Prefix: " << prefix_str << "\n";
+    //}
 
     active_threads--;
     if (enable_workstealing)
@@ -1898,6 +2022,16 @@ sop_state solver::generate_solver_state(path_node &subproblem)
     // std::cout << "New SOP state" << std::endl;
     //  print_state(state);
     //  exit(EXIT_FAILURE);
+
+    // reassigning values
+
+    // lower_bounds_per_thread[thread_id] = static_cast<int>(subproblem.lower_bound);
+    // std::ostringstream oss;
+    // for (int node : subproblem.sequence)
+    //{
+    //     oss << node << " ";
+    // }
+    // prefix_per_thread[thread_id] = oss.str();
 
     return state;
 }
