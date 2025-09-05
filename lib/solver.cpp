@@ -16,7 +16,8 @@ static bool limit_insertion = false;
 static int numberOfTimesLKHPathProcessed = 0;
 // static int numberOfTimesBestSuffixEntryUpdated = 0;
 // static int numberOfTimesBestSuffixEntryAdded = 0;
-
+int *globalBestTour = nullptr;
+int instance_size_global;
 // from config file
 static int t_limit = 0;          // time limit, in seconds
 static int global_pool_size = 0; // Minimum size of the global pool at before enumeration begins
@@ -200,6 +201,47 @@ void lkh()
     return;
 }*/
 
+void rotateTourToStartFromNode1(int *tour, int size)
+{
+    std::cout << "[processBestTour] Updated Best Tour with cost: " << best_cost << std::endl;
+    int start_index = 0;
+
+    // Find the index where node 1 is located
+    for (int i = 0; i <= size; i++)
+    {
+        if (tour[i] == 1)
+        {
+            start_index = i;
+            break;
+        }
+    }
+
+    // If the tour is already starting from node 1, no need to rotate
+    if (start_index == 0)
+        return;
+
+    // Create a temporary array to store the rotated tour
+    int *rotatedTour = new int[size + 1]; // +1 because tours are 1-indexed
+
+    // Rotate the tour so that it starts from node 1
+    int j = 0;
+    for (int i = start_index; i <= size; i++, j++)
+    {
+        rotatedTour[j] = tour[i];
+    }
+    for (int i = 0; i < start_index; i++, j++)
+    {
+        rotatedTour[j] = tour[i];
+    }
+
+    // Copy the rotated tour back to the original tour
+    for (int i = 0; i <= size; i++)
+    {
+        tour[i] = rotatedTour[i];
+    }
+
+    delete[] rotatedTour; // Clean up temporary array
+}
 void lkh()
 {
     using namespace std::chrono;
@@ -230,8 +272,47 @@ void lkh()
             stop_LKH = true;
             break;
         }
+        if (BestCost == best_cost)
+        {
+
+            // Copy global BestTour into local tour
+            int *localBestTour = new int[instance_size_global + 1];
+            for (int i = 0; i <= instance_size_global; i++)
+            {
+                localBestTour[i] = BestTour[i];
+                cout << localBestTour[i] << std::endl;
+            }
+
+            int total_cost = 0;
+            // Ensure the tour starts from node 1
+            rotateTourToStartFromNode1(localBestTour, instance_size_global);
+            // Compute total cost using prefix sum
+            for (int i = 0; i < instance_size_global - 1; i++)
+            {
+                // std::cout << "total cost" << total_cost << std::endl;
+                int src = localBestTour[i] - 1;
+                int dst = localBestTour[(i + 1)] - 1;
+                // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
+                total_cost += cost_graph[src][dst].weight;
+            }
+            std::cout << "Best Tour with cost: " << total_cost << std::endl;
+
+            globalBestTour = new int[instance_size_global + 1];
+            // Update only if the new cost is better or equal
+            if (total_cost <= best_cost)
+            {
+                best_cost = total_cost;
+                BB_SolFound = true;
+
+                for (int i = 0; i <= instance_size_global; i++)
+                    globalBestTour[i] = localBestTour[i];
+
+                std::cout << "[processBestTour] Updated Best Tour with cost: " << best_cost << std::endl;
+            }
+        }
     }
 }
+
 void print_diagnostics()
 {
     if (main_timer.get_time_seconds() > diagonstics_targetTime)
@@ -383,7 +464,7 @@ void solver::solve(string f_name, int thread_num)
     temp_solution.push_back(0);
     best_solution = nearest_neighbor(&temp_solution);
     std::cout << "Initial Best Solution Is " << best_cost << std::endl;
-
+    instance_size_global = instance_size;
     // necessary for LKH
     //  bestBB_tour = new int[instance_size];
     //  for (int i = 0; i < instance_size; i++) bestBB_tour[i] = best_solution[i] + 1;
@@ -847,7 +928,7 @@ void solver::solve_parallel()
 
     return;
 }
-
+/*
 void rotateTourToStartFromNode1(int *tour, int size)
 {
     int start_index = 0;
@@ -887,7 +968,7 @@ void rotateTourToStartFromNode1(int *tour, int size)
     }
 
     delete[] rotatedTour; // Clean up temporary array
-}
+}*/
 void solver::processBestTour()
 {
     std::cout << "[processBestTour] Initiating local best tour and Thread ID : " << thread_id << std::endl;
@@ -915,7 +996,7 @@ void solver::processBestTour()
         best_cost_temp = INT_MAX;
 
         for (int i = 0; i <= instance_size; i++)
-            localBestTour[i] = BestTour[i]; // Copy the tour
+            localBestTour[i] = globalBestTour[i]; // Copy the global tour
 
         std::cout << "[processBestTour] Processing Best Tour with cost: " << total_cost << std::endl;
         numberOfTimesLKHPathProcessed++;
