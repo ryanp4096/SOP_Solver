@@ -18,6 +18,7 @@ static int numberOfTimesLKHPathProcessed = 0;
 // static int numberOfTimesBestSuffixEntryAdded = 0;
 int *globalBestTour = nullptr;
 int instance_size_global;
+static bool is_lkh_tour_available = false;
 // from config file
 static int t_limit = 0;          // time limit, in seconds
 static int global_pool_size = 0; // Minimum size of the global pool at before enumeration begins
@@ -307,6 +308,7 @@ void lkh()
                 for (int i = 0; i <= instance_size_global; i++)
                     globalBestTour[i] = localBestTour[i];
 
+                is_lkh_tour_available = true;
                 std::cout << "[processBestTour] Updated Best Tour with cost: " << best_cost << std::endl;
             }
         }
@@ -1100,8 +1102,12 @@ void solver::enumerate()
 {
     if (thread_id == 31 && is_first_lkh_thred_use)
     {
-        std::cout << "processing best tour" << std::endl;
-        processBestTour();
+        if (is_lkh_tour_available)
+        {
+            std::cout << "processing best tour" << std::endl;
+            processBestTour();
+        }
+
         std::cout << "workload request" << std::endl;
 
         is_first_lkh_thred_use = false;
