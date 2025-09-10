@@ -204,7 +204,7 @@ void lkh()
 
 void rotateTourToStartFromNode1(int *tour, int size)
 {
-    std::cout << "[processBestTour] Updated Best Tour with cost: " << best_cost << std::endl;
+    // std::cout << "[rotateTourToStartFromNode1] rotating local best tour" << std::endl;
     int start_index = 0;
 
     // Find the index where node 1 is located
@@ -239,7 +239,9 @@ void rotateTourToStartFromNode1(int *tour, int size)
     for (int i = 0; i <= size; i++)
     {
         tour[i] = rotatedTour[i];
+        // std::cout << tour[i] << " ";
     }
+    // std::cout << std::endl;
 
     delete[] rotatedTour; // Clean up temporary array
 }
@@ -259,30 +261,30 @@ void lkh()
         }
 
         BB_SolFound = false;
-        auto now = steady_clock::now();
-        float elapsed_since_start = duration<float>(now - start).count();
 
-        if (last_updated_at == 0.0f)
+        if (last_updated_time_by_LKH == 0)
         {
-            last_updated_at = elapsed_since_start;
-            std::cout << "setting last updated at " << last_updated_at << " seconds" << std::endl;
+            last_updated_time_by_LKH = lkh_timer.get_time_seconds();
+            std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
         }
-        else if (elapsed_since_start - last_updated_at > 50.0f)
+        else if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > 1800)
         {
-            std::cout << "Time at LKH = " << elapsed_since_start << " seconds" << std::endl;
+            std::cout << "Time at LKH = " << lkh_timer.get_time_seconds() << " seconds" << std::endl;
             stop_LKH = true;
             break;
         }
-        if (BestCost == best_cost)
-        {
 
+        if (best_cost_temp == best_cost)
+        {
+            // aquire lock to copy the best tour from LKH
+            pthread_mutex_lock(&Sol_lock);
             // Copy global BestTour into local tour
             int *localBestTour = new int[instance_size_global + 1];
             for (int i = 0; i <= instance_size_global; i++)
             {
                 localBestTour[i] = BestTour[i];
-                cout << localBestTour[i] << std::endl;
             }
+            pthread_mutex_unlock(&Sol_lock);
 
             int total_cost = 0;
             // Ensure the tour starts from node 1
@@ -299,17 +301,14 @@ void lkh()
             std::cout << "Best Tour with cost: " << total_cost << std::endl;
 
             globalBestTour = new int[instance_size_global + 1];
-            // Update only if the new cost is better or equal
-            if (total_cost <= best_cost)
+            // Update only if the path cost is equal to the best cost
+            if (total_cost == best_cost)
             {
-                best_cost = total_cost;
-                BB_SolFound = true;
-
                 for (int i = 0; i <= instance_size_global; i++)
                     globalBestTour[i] = localBestTour[i];
 
                 is_lkh_tour_available = true;
-                std::cout << "[processBestTour] Updated Best Tour with cost: " << best_cost << std::endl;
+                std::cout << "[LKH] Updated Best Tour with cost: " << total_cost << std::endl;
             }
         }
     }
@@ -974,7 +973,6 @@ void rotateTourToStartFromNode1(int *tour, int size)
 void solver::processBestTour()
 {
     std::cout << "[processBestTour] Initiating local best tour and Thread ID : " << thread_id << std::endl;
-    best_cost_temp = best_cost;
 
     if (best_cost_temp == best_cost)
     {
@@ -1007,7 +1005,7 @@ void solver::processBestTour()
         // Now print the copied tour
 
         // Ensure the tour starts from node 1
-        rotateTourToStartFromNode1(localBestTour, instance_size);
+        // rotateTourToStartFromNode1(localBestTour, instance_size);
 
         // Now, check the prefix paths in the history table
         boost::dynamic_bitset<> bit_vector(instance_size, false); // Initialize the key bitset
