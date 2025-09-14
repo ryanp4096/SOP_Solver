@@ -255,7 +255,7 @@ int LKH(char *problem_file, bool initial_LKHRun)
     while (true)
     {
         LastTime = GetTime();
-        if (BB_Complete || BB_SolFound || LastTime - StartTime >= 200)
+        if (BB_Complete || BB_SolFound || LastTime - StartTime >= TimeLimit || stop_lkh_flag)
         {
             /*
             if (TraceLevel >= 1)
