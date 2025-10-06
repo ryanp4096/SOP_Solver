@@ -137,6 +137,7 @@ bool initial_LKHRun = true;
 int best_cost_temp = INT_MAX; // Temporary variable to store best cost at the time of copying
 int *lkh_best_tour = NULL;
 float last_updated_time_by_LKH = 0;
+int lkh_end_time = 100;
 
 // bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
@@ -332,7 +333,8 @@ void solver::solve(string f_name, int thread_num)
     }
     pre_density = float(transitive_closure(dependency_graph)) / float((instance_size) * (instance_size - 1));
     std::cout << "Precedance Density = " << pre_density << std::endl;
-
+    lkh_end_time = 3600*pre_density;
+    std::cout << "LKH End after inactivity of = " << lkh_end_time << std::endl;
     // local_pool_config(float((instance_size - 1)*(instance_size-2))/float(total_edges));
 
     // Find Initial Best Solution
@@ -993,7 +995,7 @@ void solver::processBestTour()
 
 void solver::enumerate()
 {
-    if (thread_id == 31 && is_first_lkh_thread_use)
+    if (thread_id == thread_total && is_first_lkh_thread_use)
     {
 
         std::cout << "workload request" << std::endl;
@@ -1028,8 +1030,9 @@ void solver::enumerate()
             }
         }
         // TODO: optimize it later on
-        if (thread_id == 1 && !stop_lkh_flag && (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > 3600)) // TODO: optimize it later on
+        if (thread_id == 1 && !stop_lkh_flag && (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > lkh_end_time)) // TODO: optimize it later on
         {
+            cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
             stop_lkh_flag = true;
         }
         // PROGRESS variables
