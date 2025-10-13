@@ -35,7 +35,7 @@ Enable = 1
 Enable = 1
 
 //Number of buckets for history table
-Number_of_Buckets = 3
+Number_of_Buckets = 1
 
 //Each bucket size for history table (pass 0 to split the entries in each bucket equally)
 Bucket_size = 0
