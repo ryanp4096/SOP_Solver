@@ -1722,8 +1722,8 @@ bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_
             thread_requests[thread_id].has_request = false;
             thread_requests[thread_id].lock.unlock();
             return false; // Indicate that a stop request was found and handled
-            thread_requests[thread_id].lock.unlock();
         }
+        thread_requests[thread_id].lock.unlock();
     }
     return false;
 }
