@@ -1470,8 +1470,7 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
                 if (!thread_requests[target_ID].has_request || thread_requests[target_ID].request.target_depth > (int)problem_state.current_path.size()) // extra validation
                 {
                     thread_stop_requested++;
-                    thread_requests[target_ID].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
-                                                                        content.prefix_cost, target_ID, key.first);
+                    thread_requests[target_ID].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(), cost, target_ID, key.first);
                     thread_requests[target_ID].has_request = true;
                 }
                 thread_requests[target_ID].lock.unlock();
@@ -1690,56 +1689,53 @@ bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_
     if (thread_requests[thread_id].has_request)
     {
         thread_requests[thread_id].lock.lock();
-        if (thread_requests[thread_id].has_request)
-        {
-            request_packet rp = thread_requests[thread_id].request;
+        request_packet rp = thread_requests[thread_id].request;
 
-            if (rp.target_depth <= sequence.size())
+        if (rp.target_depth <= sequence.size())
+        {
+            
+            if (rp.target_last_node == sequence[rp.target_depth - 1])
             {
-               
-                if (rp.target_last_node == sequence[rp.target_depth - 1])
+                thread_stop_check++;
+                if (rp.key == history_key.first) // will only occur when the size of the target_depth and sequence size is same
                 {
-                    thread_stop_check++;
-                    if (rp.key == history_key.first) // will only occur when the size of the target_depth and sequence size is same
-                    {
-                        int current_cost = problem_state.current_cost;
-                        if (current_cost >= rp.target_prefix_cost) {
-                            thread_stopped_successfully++;
-                            thread_requests[thread_id].has_request = false;
-                            thread_requests[thread_id].lock.unlock();
-                            return true; // Indicate that a stop request was found and handled
-                        }
-                    }
-                    else if (check_history_key_and_cost(sequence, rp.target_depth, rp.key, rp.target_prefix_cost)) // will only occur when the size of the target_depth and sequence size is different
-                    { 
-                            thread_stopped_successfully++;
-                            *prefixKeyMatched = true;
-                            thread_requests[thread_id].lock.unlock();
-                            return true; // Indicate that a stop request was found and handled
+                    int current_cost = problem_state.current_cost;
+                    if (current_cost >= rp.target_prefix_cost) {
+                        thread_stopped_successfully++;
+                        thread_requests[thread_id].has_request = false;
+                        thread_requests[thread_id].lock.unlock();
+                        return true; // Indicate that a stop request was found and handled
                     }
                 }
+                else if (check_history_key_and_cost(sequence, rp.target_depth, rp.key, rp.target_prefix_cost)) // will only occur when the size of the target_depth and sequence size is different
+                { 
+                        thread_stopped_successfully++;
+                        *prefixKeyMatched = true;
+                        thread_requests[thread_id].lock.unlock();
+                        return true; // Indicate that a stop request was found and handled
+                }
             }
-            thread_requests[thread_id].has_request = false;
-            thread_requests[thread_id].lock.unlock();
-            return false; // Indicate that a stop request was found and handled
         }
+        thread_requests[thread_id].has_request = false;
         thread_requests[thread_id].lock.unlock();
+        return false; // Indicate that a stop request was found and handled
     }
     return false;
 }
  
 bool solver::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
 {
-    boost::dynamic_bitset<> temp_history_key(instance_size);
+    // boost::dynamic_bitset<> temp_history_key(instance_size);
     int current_cost = 0;
     for (int i = 0; i < depth; ++i)
     {
-        temp_history_key.set(sequence[i]);
- 
+        // temp_history_key.set(sequence[i]);
+        if (!key.test(sequence[i])) return false;
+
         if (i < depth - 1)
             current_cost += cost_graph[sequence[i]][sequence[i+1]].weight;
     }
-    return temp_history_key == key && current_cost >= target_prefix_cost;
+    return current_cost >= target_prefix_cost;
 }
 
 /* END DIAGNOSTIC FUNCTIONS */
