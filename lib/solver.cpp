@@ -368,6 +368,7 @@ void solver::solve(string f_name, int thread_num)
         }
     }
 
+    // we need to split the instance into 3 equal parts if the group size is 0 in the configuration file
     if (bucket_size == 0)
     {
         bucket_size = instance_size / number_of_groups;
@@ -375,9 +376,11 @@ void solver::solve(string f_name, int thread_num)
     }
     else if (bucket_size * (number_of_groups - 1) >= instance_size - 2)
     {
-        std::cout << "Exiting the code. Invalid bucket size" << endl;
+
+        cout << "Exiting the code. Invalid bucket size" << endl;
         exit(EXIT_FAILURE);
     }
+
     default_state = problem_state; // a copy of problem_state, since structs are passed by value
     std::cout << "Instance size is " << instance_size - 2 << std::endl;
 
@@ -453,7 +456,7 @@ void solver::solve(string f_name, int thread_num)
     double percent_time_active = (((double)total_time / 1000000) * 32 - time_workstealing) / ((double)total_time / 1000000 * 32);
     std::cout << "active time: " << percent_time_active << endl;
 
-    std::cout << best_cost << "," << setprecision(4) << total_time / (float)(1000000) << std::endl
+    std::cout << "best_cost: " << best_cost << "," << setprecision(4) << total_time / (float)(1000000) << std::endl
               << std::endl;
 
     for (int i = 0; i < steal_times.size(); i++)
@@ -462,6 +465,7 @@ void solver::solve(string f_name, int thread_num)
     }
     print_workdone();
 
+    print_workdone();
     // to count the number of entries at different level in history table and their references
     // history_table.track_entries_and_references();
 
@@ -1148,11 +1152,12 @@ void solver::enumerate()
                                     if (is_space_increased_or_available)
                                     {
                                         if (problem_state.current_path.size() <= bucket_size)
-                                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
+                                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false);
                                     }
                                     else
                                     {
-                                        std::cout << "time is: " << main_timer.get_time_seconds() << endl;
+                                        cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+
                                         /** to prevent further checking, we set limit_insertion to true */
                                         limit_insertion = true;
                                     }
@@ -2005,60 +2010,53 @@ bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_
         if (thread_requests[thread_id].has_request)
         {
             request_packet rp = thread_requests[thread_id].request;
-            // if (rp.target_thread == thread_id)
-            // {
+
             if (rp.target_depth <= sequence.size())
             {
-                int current_cost = problem_state.current_cost;
-                for (int i = 0; i < sequence.size() - rp.target_depth; i++)
-                {
-                    current_cost -= cost_graph[cost_graph.size() - i - 1][cost_graph.size() - i].weight;
-                }
-                if (rp.target_last_node == sequence[rp.target_depth - 1] && current_cost >= rp.target_prefix_cost)
+               
+                if (rp.target_last_node == sequence[rp.target_depth - 1])
                 {
                     thread_stop_check++;
                     if (rp.key == history_key.first) // will only occur when the size of the target_depth and sequence size is same
                     {
-                        // tracking the pruning at current depth
-                        // history_table_pruning_success[sequence.size()]++;
-                        thread_stopped_successfully++;
-                        thread_requests[thread_id].has_request = false;
-                        thread_requests[thread_id].lock.unlock();
-                        return true; // Indicate that a stop request was found and handled
+                        int current_cost = problem_state.current_cost;
+                        if (current_cost >= rp.target_prefix_cost) {
+                            thread_stopped_successfully++;
+                            thread_requests[thread_id].has_request = false;
+                            thread_requests[thread_id].lock.unlock();
+                            return true; // Indicate that a stop request was found and handled
+                        }
                     }
-                    else if (rp.key == generate_history_key(sequence, rp.target_depth)) // will only occur when the size of the target_depth and sequence size is different
-                    {
-                        // tracking the pruning at current depth
-                        // history_table_pruning_success[sequence.size()]++;
-                        thread_stopped_successfully++;
-                        *prefixKeyMatched = true;
-                        thread_requests[thread_id].lock.unlock();
-                        return true; // Indicate that a stop request was found and handled
+                    else if (check_history_key_and_cost(sequence, rp.target_depth, rp.key, rp.target_prefix_cost)) // will only occur when the size of the target_depth and sequence size is different
+                    { 
+                            thread_stopped_successfully++;
+                            *prefixKeyMatched = true;
+                            thread_requests[thread_id].lock.unlock();
+                            return true; // Indicate that a stop request was found and handled
                     }
                 }
             }
             thread_requests[thread_id].has_request = false;
             thread_requests[thread_id].lock.unlock();
             return false; // Indicate that a stop request was found and handled
-            // }
-            // else
-            // {
-            //    std::cout << "thread id mismatch \n";
-            // }
-            thread_requests[thread_id].lock.unlock();
         }
+        thread_requests[thread_id].lock.unlock();
     }
     return false;
 }
-
-boost::dynamic_bitset<> solver::generate_history_key(const vector<int> &sequence, int depth)
+ 
+bool solver::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
 {
     boost::dynamic_bitset<> temp_history_key(instance_size);
+    int current_cost = 0;
     for (int i = 0; i < depth; ++i)
     {
         temp_history_key.set(sequence[i]);
+ 
+        if (i < depth - 1)
+            current_cost += cost_graph[sequence[i]][sequence[i+1]].weight;
     }
-    return temp_history_key;
+    return temp_history_key == key && current_cost >= target_prefix_cost;
 }
 
 /* END DIAGNOSTIC FUNCTIONS */

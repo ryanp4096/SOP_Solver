@@ -92,9 +92,10 @@ Let's consider a sequence of events happening sequentially, with `Restrict_Per` 
 
 #### Initial Setup:
 
-- Number_of_Buckets = 3
-- Bucket_size = 25
-- Restrict_Per = 0.9
+- Number_of_Buckets = 3 (number of split of history table)
+- Bucket_size = 25 (depth of the entries per bucket)
+- Restrict_Per = 0.9 (memory restriction)
+- Enable Heuristic = 1 (will treat 3 history table as a single history table)
 
 #### Memory Management Steps:
 
@@ -110,4 +111,5 @@ This approach ensures that memory is managed efficiently by gradually restrictin
 ## Version
 
 - `version_1.0.0`: Branch before merging the history changes
+- `version_2.0.0`: Branch after merging the history changes
 - `main`: Latest branch with all the history changes merged into it

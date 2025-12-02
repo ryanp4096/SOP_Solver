@@ -197,9 +197,8 @@ private:
     // For checking, if any thread requested another thread to stop
     bool check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_key, std::vector<int> sequence, bool *prefixPathMatched);
 
-    // for generating history_key
-    boost::dynamic_bitset<> generate_history_key(const vector<int> &sequence, int depth);
-
+    // for generating history_key and cost
+    bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
     void assign_parameter(vector<string> setting);
