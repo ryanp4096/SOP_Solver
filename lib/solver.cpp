@@ -469,8 +469,6 @@ void solver::solve(string f_name, int thread_num)
         std::cout << steal_times[i] << endl;
     }
     print_workdone();
-
-    print_workdone();
     // to count the number of entries at different level in history table and their references
     // history_table.track_entries_and_references();
 
