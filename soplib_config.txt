@@ -42,3 +42,9 @@ Bucket_size = 0
 
 //Enable Heuristic: Treat 3 subtable as 1 table if the global pool is empty before hitting the first threshold
 Enable = 0
+
+// Stop LKH after this duration and re use the thread in the solver
+END_LKH_TIME = 100
+
+// Time in seconds that decide wheather the LKH entry is stable i.e. unchanged for this amount of time and should be processed
+STABLE_LKH_ENTRY_DURATION = 10

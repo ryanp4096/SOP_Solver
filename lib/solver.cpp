@@ -137,7 +137,8 @@ bool initial_LKHRun = true;
 int best_cost_temp = INT_MAX; // Temporary variable to store best cost at the time of copying
 int *lkh_best_tour = NULL;
 float last_updated_time_by_LKH = 0;
-int lkh_end_time = 100;
+int lkh_end_time = 100; // updated with the config file value
+int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
 
 // bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
@@ -253,6 +254,11 @@ void solver::assign_parameter(vector<string> setting)
     else
         enable_lkh = true;
 
+    lkh_end_time = atoi(setting[15].c_str());
+    std::cout << "LKH end time after inactivity = " << lkh_end_time
+                << " seconds" << std::endl;
+
+    lkh_stable_entry_duration = atoi(setting[16].c_str());
     // if (!atoi(setting[11].c_str())) enable_progress_estimation = false;
     // else enable_progress_estimation = true;
     number_of_groups = atoi(setting[12].c_str());
@@ -333,8 +339,7 @@ void solver::solve(string f_name, int thread_num)
     }
     pre_density = float(transitive_closure(dependency_graph)) / float((instance_size) * (instance_size - 1));
     std::cout << "Precedance Density = " << pre_density << std::endl;
-    lkh_end_time = 3600*pre_density;
-    std::cout << "LKH End after inactivity of = " << lkh_end_time << std::endl;
+
     // local_pool_config(float((instance_size - 1)*(instance_size-2))/float(total_edges));
 
     // Find Initial Best Solution
@@ -1011,7 +1016,7 @@ void solver::enumerate()
     while (!time_out)
     {
         print_diagnostics();
-        if (!BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
+        if (!stop_lkh_flag && !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
         {
             // last updated best cost is not by LKH or LKH has not updated anything yet
             if (last_updated_time_by_LKH == 0)
@@ -1021,8 +1026,7 @@ void solver::enumerate()
             }
             else
             {
-                // std::cout << "here " << endl;
-                if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > 100)
+                if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > lkh_stable_entry_duration)
                 {
                     // If another thread is already processing, return immediately
                     bool expected = false;
@@ -1034,7 +1038,7 @@ void solver::enumerate()
             }
         }
         // TODO: optimize it later on
-        if (thread_id == 1 && !stop_lkh_flag && (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > lkh_end_time)) // TODO: optimize it later on
+        if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time)) // TODO: optimize it later on
         {
             cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
             stop_lkh_flag = true;
