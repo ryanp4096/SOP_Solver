@@ -1152,7 +1152,7 @@ void solver::enumerate()
                                     if (is_space_increased_or_available)
                                     {
                                         if (problem_state.current_path.size() <= bucket_size)
-                                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false);
+                                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
                                     }
                                     else
                                     {
