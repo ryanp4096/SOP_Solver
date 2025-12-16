@@ -100,9 +100,6 @@ GainType FindTour()
                 printf("Best Cost temp = %lld updated by LKH \n", best_cost_temp);
                 RecordBetterTour();
                 RecordBestTour();
-                // set the LKH best tour -- used in processing best tour in solver.cpp
-                for (i = 0; i <= instance_size_global + 1; i++)
-                    lkh_best_tour[i] = BestTour[i];
 
                 // printf("Best tour path:\n");
                 // for (int i = 1; i <= Dimension; i++) {

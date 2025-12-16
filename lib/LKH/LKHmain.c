@@ -257,6 +257,9 @@ int LKH(char *problem_file, bool initial_LKHRun)
         LastTime = GetTime();
         if (BB_Complete || BB_SolFound || LastTime - StartTime >= TimeLimit || stop_lkh_flag)
         {
+            // set the LKH best tour -- used in processing best tour in solver.cpp
+            for (i = 0; i <= instance_size_global + 1; i++)
+                lkh_best_tour[i] = BestTour[i];
             /*
             if (TraceLevel >= 1)
                 printff("*** Time limit exceeded ***\n");

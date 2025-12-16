@@ -1014,7 +1014,8 @@ void solver::enumerate()
     while (!time_out)
     {
         print_diagnostics();
-        if (!stop_lkh_flag && !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
+        // process best tour from LKH if needed
+        if (!BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
         {
             // last updated best cost is not by LKH or LKH has not updated anything yet
             if (last_updated_time_by_LKH == 0)
@@ -1023,8 +1024,10 @@ void solver::enumerate()
                 std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
             }
             else
-            {
-                if (lkh_timer.get_time_seconds() - last_updated_time_by_LKH > lkh_stable_entry_duration)
+            {   
+                // TEMP to make sure the LKH thread is th ethread that is processing it, 
+                // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
+                if (lkh_timer.get_time_seconds() > lkh_stable_entry_duration && thread_id == thread_total)
                 {
                     // If another thread is already processing, return immediately
                     bool expected = false;
@@ -1036,7 +1039,7 @@ void solver::enumerate()
             }
         }
         // TODO: optimize it later on
-        if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time)) // TODO: optimize it later on
+        if (thread_id == 0 && !stop_lkh_flag && (lkh_timer.get_time_seconds() > lkh_end_time))
         {
             cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
             stop_lkh_flag = true;
