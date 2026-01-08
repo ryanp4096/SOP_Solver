@@ -98,28 +98,6 @@ GainType FindTour()
                 last_updated_time_by_LKH = 0;
                 BB_SolFound = false;
                 printf("Best Cost temp = %lld updated by LKH \n", best_cost_temp);
-                RecordBetterTour();
-                RecordBestTour();
-
-                // printf("Best tour path:\n");
-                // for (int i = 1; i <= Dimension; i++) {
-                //     // Node *node = &NodeSet[BestTour[i]];
-                //     // printf("Node %d (%.2f, %.2f) ", node->Id, node->X, node->Y);
-                //     printf("%d ", BestTour[i]);
-                // }
-                // printf("\n");
-                // printf("Best Cost = %lld\n", (long long)best_cost);
-                // printf("Dimension = %d\n", Dimension);
-                // printf("Best tour path:\n");
-                // if (BestTour == NULL) {
-                //     printf("BestTour is NULL\n");
-                //     return;
-                // }
-                // for (int i = 1; i <= Dimension; i++) {
-                //     printf("%d ", BestTour[i]);
-                //     // if (i % 20 == 0) printf("\n");  // Line break every 20 numbers for readability
-                // }
-                // printf("\n");
                 pthread_mutex_unlock(&Sol_lock);
             }
 

@@ -177,6 +177,7 @@ bool local_pool_sort(const path_node &src, const path_node &dest) { return src.l
 static double gp_const;     // store the total work in the global pool initially
 static double gp_remaining; // variable to store the number of remaining work from global pool
 bool stop_lkh_flag = false;
+bool lkh_entry_processed = false;
 std::atomic<bool> is_first_lkh_thread_use{true};
 void lkh()
 {
@@ -986,12 +987,6 @@ void solver::processBestTour()
                 //            << prefix_cost << ", History Cost: " << content.prefix_cost << std::endl;
             }
         }
-
-        // else
-        // {
-        //    std::cout << "Prefix path (" << src << " to " << dst << ") not found in the history table." << std::endl;
-        // }
-        isProcessingBestTour.store(false);
     }
     else
     {
@@ -1013,9 +1008,9 @@ void solver::enumerate()
     }
     while (!time_out)
     {
-        print_diagnostics();
         // process best tour from LKH if needed
-        if (!BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
+        // thread that was used for lkh is being used to process the best tour found by LKH
+        if (!lkh_entry_processed && (thread_id == thread_total || thread_id == 0) && !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
         {
             // last updated best cost is not by LKH or LKH has not updated anything yet
             if (last_updated_time_by_LKH == 0)
@@ -1024,22 +1019,21 @@ void solver::enumerate()
                 std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
             }
             else
-            {   
-                // TEMP to make sure the LKH thread is th ethread that is processing it, 
-                // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
-                if (lkh_timer.get_time_seconds() > lkh_stable_entry_duration && thread_id == thread_total)
+            {  
+            // TEMP to make sure the LKH thread is th ethread that is processing it, 
+            // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
+                if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
                 {
-                    // If another thread is already processing, return immediately
-                    bool expected = false;
-                    if (isProcessingBestTour.compare_exchange_strong(expected, true))
-                    {
-                        processBestTour();
-                    }
+                    cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
+
+                    processBestTour();
+                    lkh_entry_processed = true;
                 }
             }
+            
         }
-        // TODO: optimize it later on
-        if (thread_id == 0 && !stop_lkh_flag && (lkh_timer.get_time_seconds() > lkh_end_time))
+        // TODO: optimize it later on thread 0 stops the LKH after time limit is reached
+        if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time))
         {
             cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
             stop_lkh_flag = true;
