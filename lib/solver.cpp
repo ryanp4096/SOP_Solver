@@ -132,13 +132,13 @@ bool BB_SolFound = false; // whether the current best solution was found by B&B,
 bool BB_Complete = false;
 bool local_searchinit = true;
 bool initial_LKHRun = true;
+//bool thread_ReturnedFromLKH = false;
 
 // below variables is for sharing LKH best tour
 int best_cost_temp = INT_MAX; // Temporary variable to store best cost at the time of copying
 int *lkh_best_tour = NULL;
 float last_updated_time_by_LKH = 0;
 int lkh_end_time = 100; // updated with the config file value
-int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
 
 // bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
@@ -259,7 +259,6 @@ void solver::assign_parameter(vector<string> setting)
     std::cout << "LKH end time after inactivity = " << lkh_end_time
                 << " seconds" << std::endl;
 
-    lkh_stable_entry_duration = atoi(setting[16].c_str());
     // if (!atoi(setting[11].c_str())) enable_progress_estimation = false;
     // else enable_progress_estimation = true;
     number_of_groups = atoi(setting[12].c_str());
@@ -780,7 +779,8 @@ void solver::solve_parallel()
                            {
         // Run LKH until optimal or timeout
         lkh();
-        
+        //thread_ReturnedFromLKH = true;
+        //std::cout << "LKH thread finished\n";
 
         // As soon as LKH is done, immediately start enumerate on a new subproblem
         int lkh_thread_index = thread_total; // Use the next available index
