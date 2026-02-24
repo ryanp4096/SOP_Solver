@@ -148,16 +148,16 @@ private:
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.
         Return - true if the node was discarded, false if its subspace must still be enumerated */
-    bool enumeration_pre_check(path_node &active_node);
+    inline bool enumeration_pre_check(path_node &active_node);
     /*called when pruning a node in enumerate*/
-    void prune(int source_node, int taken_node, int edge_weight);
+    inline void prune(int source_node, int taken_node, int edge_weight);
 
     /* Computes a dynamic lower bound based on the previous path with this node added, using the MCPM relaxation.
         Contains the fix and undue calls internally.
         src - the number of this node's parent
         dst - the number of the node to be added
         Return - the lower bound computed */
-    int dynamic_hungarian(int src, int dst);
+    inline int dynamic_hungarian(int src, int dst);
 
     /* Search the history table for previously processed similar paths, and compares the current path to that entry, if found.
         key - the history key corresponding to the current partial path
@@ -166,13 +166,13 @@ private:
         entry - a return variable, a pointer to the history node corresponding to this path
         cost - the cost of the current path
         Return - true if this node still needs to be processed, false if it should be pruned */
-    bool history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source, int destination);
+    inline bool history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source, int destination);
     /* Add a new entry to the history table.
         key - the history key corresponding to the partial path this entry represents
         lower_bound - the lower bound cost of a complete solution beginning with this path
         entry - a return variable, holds a pointer to the entry created, unless NULL is passed
         backtracked - if the subtree under this node has already been fully explored */
-    void push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
+    inline void push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
 
 
     /* returns true on success */
@@ -195,7 +195,7 @@ private:
     void print_state(sop_state &state);
 
     // For checking, if any thread requested another thread to stop
-    bool check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_key, std::vector<int> sequence, bool *prefixPathMatched);
+    bool check_stop_request(const std::pair<boost::dynamic_bitset<>, int>& history_key, const std::vector<int>& sequence, bool *prefixPathMatched);
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);

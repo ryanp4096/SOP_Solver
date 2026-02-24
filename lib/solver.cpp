@@ -6,7 +6,6 @@ extern "C"
 }
 
 #define TABLE_SIZE 541065431 // number of buckets in the history table
-std::atomic<bool> isProcessingBestTour(false);
 
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
@@ -80,6 +79,7 @@ static mutex diagnostics_lock;
 static int diagonstics_period = 1800;
 static float diagonstics_targetTime = 0;
 static atomic<bool> time_out(false);  // whether the instance has timed out
+static std::atomic<bool> parallel_setup_complete(false); // whether B&B solver_parallel has finished setting up structures
 static atomic<int> active_threads(0); // the number of threads still working
 // static atomic<int> selected_thread (-1);
 // static atomic<int> restart_cnt (0);
@@ -419,16 +419,41 @@ void solver::solve(string f_name, int thread_num)
     for (int i = 0; i < instance_size; i++)
         bestBB_tour[i] = best_solution[i] + 1;
 
-    // if (enable_lkh)
-    //     LKH_thread = thread(lkh);
+    std::thread lkh_thread;
+    if (enable_lkh)
+    {
+        std::cout << "Launching LKH thread before BB parallel setup\n";
+        lkh_thread = std::thread([&]()
+                               {
+            // Run LKH until optimal or timeout
+            lkh();
+
+            // As soon as LKH is done, immediately start enumerate on a new subproblem
+            // Must wait until solve_parallel completes BB structures (work_remaining, global_pool, local_pools)
+            while (!parallel_setup_complete && !BB_Complete) {
+                std::this_thread::yield();
+            }
+
+            int lkh_thread_index = thread_total; // Use the next available index
+            solver lkh_solver;
+            lkh_solver.problem_state = default_state;
+            lkh_solver.thread_id = lkh_thread_index;
+            lkh_solver.instance_size = instance_size;
+            if (!BB_Complete){
+                lkh_solver.enumerate();
+            }
+                
+            std::cout << "Enumerate (reused LKH thread) finished\n"; });
+    }
 
     auto start_time = chrono::high_resolution_clock::now();
     solve_parallel();
     auto end_time = chrono::high_resolution_clock::now();
 
-    // if (enable_lkh)
-    //     if (LKH_thread.joinable())
-    //         LKH_thread.join();
+    if (enable_lkh && lkh_thread.joinable())
+    {
+        lkh_thread.join();
+    }
 
     // DIAGNOSTIC : Enumerated Nodes
     unsigned long long enumerated_nodes_sum = 0;
@@ -767,45 +792,27 @@ void solver::solve_parallel()
     work_remaining[thread_cnt] = 0;
 
     std::cout << "thread total " << thread_total << "\n";
+
     for (int i = 0; i < thread_total; ++i)
     {
-        std::cout << "Starting thread " << i << "\n";
+        //std::cout << "Starting thread " << i << "\n";
         Thread_manager[i] = thread(&solver::enumerate, move(solvers[i]));
         active_threads++;
     }
-    // use the LKH thread for LKH
-    std::cout << "Launching LKH thread\n";
-    std::thread lkh_thread([&]()
-                           {
-        // Run LKH until optimal or timeout
-        lkh();
-        //thread_ReturnedFromLKH = true;
-        //std::cout << "LKH thread finished\n";
+    
+    // Update the LKH converted thread that the parallel setup is complete
+    parallel_setup_complete = true;
 
-        // As soon as LKH is done, immediately start enumerate on a new subproblem
-        int lkh_thread_index = thread_total; // Use the next available index
-        solver lkh_solver;
-        lkh_solver.problem_state = default_state;
-        lkh_solver.thread_id = lkh_thread_index;
-        lkh_solver.instance_size = instance_size;
-        if (!BB_Complete){
-            lkh_solver.enumerate();
-        }
-            
-        std::cout << "Enumerate (reused LKH thread) finished\n"; });
-
-    // Wait for all B&B threads to finish (including the repurposed LKH thread)
+    // Wait for all B&B threads to finish
     for (int i = 0; i < thread_total; ++i)
     {
         if (Thread_manager[i].joinable())
         {
             Thread_manager[i].join();
-            std::cout << "Thread " << i << " joined\n";
+            //std::cout << "Thread " << i << " joined\n";
         }
     }
     BB_Complete = true;
-    if (lkh_thread.joinable())
-        lkh_thread.join();
     active_threads = 0;
 
     if (time_out)
@@ -908,7 +915,6 @@ void solver::processBestTour()
         if (safety_cost_check_total != total_cost)
         {
             std::cout << "Mismatch in total cost calculation! Computed: " << safety_cost_check_total << ", Expected: " << total_cost << std::endl;
-            isProcessingBestTour.store(false);
             return;
         }
 
@@ -973,11 +979,8 @@ void solver::processBestTour()
                      *
                      */
                     history_node->is_best_suffix = lkh_suffix_cost - cost_graph[src][dst].weight == content.lower_bound - content.prefix_cost;
+                    history_node->entry.store(content);
                 }
-                // else
-                // {
-                //     content.prefix_cost = prefix_cost; // Update the cost in the history table
-                // }
             }
             else
             {
@@ -999,7 +1002,12 @@ void solver::enumerate()
 {
     if (thread_id == thread_total && is_first_lkh_thread_use)
     {
-
+        // process best tour from LKH if the cost is the same
+        if (best_cost_temp == best_cost)
+        {
+            cout << "Processing LKH tour at time " << main_timer.get_time_seconds() << " with cost " << best_cost_temp << " on thread " << thread_id << endl;
+            processBestTour();
+        }
         std::cout << "workload request" << std::endl;
 
         is_first_lkh_thread_use = false;
@@ -1008,30 +1016,6 @@ void solver::enumerate()
     }
     while (!time_out)
     {
-        // process best tour from LKH if needed
-        // thread that was used for lkh is being used to process the best tour found by LKH
-        if (!lkh_entry_processed && (thread_id == thread_total || thread_id == 0) && !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
-        {
-            // last updated best cost is not by LKH or LKH has not updated anything yet
-            if (last_updated_time_by_LKH == 0)
-            {
-                last_updated_time_by_LKH = lkh_timer.get_time_seconds();
-                std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
-            }
-            else
-            {  
-            // TEMP to make sure the LKH thread is th ethread that is processing it, 
-            // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
-                if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
-                {
-                    cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
-
-                    processBestTour();
-                    lkh_entry_processed = true;
-                }
-            }
-            
-        }
         // TODO: optimize it later on thread 0 stops the LKH after time limit is reached
         if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time))
         {
@@ -1085,7 +1069,7 @@ void solver::enumerate()
                                 best_cost = problem_state.current_cost;
                                 best_solution = problem_state.current_path;
                                 // LKH
-                                if (enable_lkh)
+                                if (enable_lkh && !stop_lkh_flag)
                                 {
                                     for (int i = 0; i < (int)(best_solution.size()); i++)
                                         bestBB_tour[i] = best_solution[i] + 1;
@@ -1678,7 +1662,7 @@ bool solver::split_level_check(deque<sop_state> *solver_container)
     return solver_container->front().current_path.size() != solver_container->back().current_path.size();
 }
 
-bool solver::enumeration_pre_check(path_node &active_node)
+inline bool solver::enumeration_pre_check(path_node &active_node)
 {
     if (active_node.lower_bound >= best_cost
         // || stop_init
@@ -1702,7 +1686,7 @@ bool solver::enumeration_pre_check(path_node &active_node)
     return false;
 }
 
-void solver::prune(int source_node, int taken_node, int edge_weight)
+inline void solver::prune(int source_node, int taken_node, int edge_weight)
 {
     problem_state.current_path.pop_back();               // Undo temporary path addition
     problem_state.current_cost -= edge_weight;           // Undo temporary cost addition
@@ -1710,7 +1694,7 @@ void solver::prune(int source_node, int taken_node, int edge_weight)
     problem_state.history_key.second = source_node;      // Undo temporary history key
 }
 
-int solver::dynamic_hungarian(int src, int dst)
+inline int solver::dynamic_hungarian(int src, int dst)
 {
     problem_state.hungarian_solver.fix_row(src, dst);
     problem_state.hungarian_solver.fix_column(dst, src);
@@ -1722,7 +1706,7 @@ int solver::dynamic_hungarian(int src, int dst)
     return lb;
 }
 
-bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
+inline bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
 {
     HistoryNode *history_node = history_table.retrieve(key, problem_state.current_path.size());
 
@@ -1784,14 +1768,12 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
     }
     else
     {
-        /**
-         * since we don't have the best suffix lower bound, we will not consider any improvement logic here
-         * whenever, we are updating the lower bound from B&B, we will set is_best_suffix to true
-         */
-        // numberOfTimesBestSuffixEntryUpdated++;
+
         history_node->is_best_suffix = true;
         history_node->entry.store({cost, *lowerbound});
         *entry = history_node;
+        if (*lowerbound >= best_cost)
+            return false;
     }
     history_node->explored = false;
     history_node->active_threadID = thread_id;
@@ -1812,7 +1794,7 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
  * @param entry Pointer to the history node entry; updated if an existing entry is found.
  * @param backtracked Boolean indicating if the path has been backtracked.
  */
-void solver::push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost)
+inline void solver::push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost)
 {
     if (entry == NULL)
         history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
@@ -2001,7 +1983,7 @@ void solver::print_state(sop_state &state)
     std::cout << std::endl;
 }
 
-bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_key, vector<int> sequence, bool *prefixKeyMatched)
+bool solver::check_stop_request(const std::pair<boost::dynamic_bitset<>, int>& history_key, const vector<int>& sequence, bool *prefixKeyMatched)
 {
     if (thread_requests[thread_id].has_request)
     {
