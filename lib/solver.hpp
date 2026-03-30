@@ -34,6 +34,8 @@
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
+#include "synchronization.hpp"
+
 /* A Thread Stop request. */
 struct request_packet
 {
@@ -52,7 +54,7 @@ struct thread_request
 {
     request_packet request;
     bool has_request; // Add a flag to indicate if a request is present
-    std::mutex lock;
+    spin_lock lock;
     thread_request() : request(), has_request(false) {}
 };
 
