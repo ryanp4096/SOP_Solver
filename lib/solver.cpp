@@ -130,6 +130,7 @@ pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;
 
 ///////////Diagnostic Variables//////////
 static vector<unsigned long long> enumerated_nodes; // total number of nodes processed by each thread
+static vector<unsigned long long> pruned_nodes;
 static atomic<int> times_work_stolen;
 static atomic<int> steal_misses;
 static vector<atomic<int>> steal_attempts = vector<atomic<int>>(32);
@@ -404,10 +405,17 @@ void solver::solve(string f_name, int thread_num)
             LKH_thread.join();
 
     // DIAGNOSTIC : Enumerated Nodes
-    //  unsigned long long enumerated_nodes_sum = 0;
-    //  for(int i = 0; i < enumerated_nodes.size(); i++){
-    //      enumerated_nodes_sum += enumerated_nodes[i];
-    //  }
+    unsigned long long enumerated_nodes_sum = 0;
+    unsigned long long pruned_nodes_sum = 0;
+    for(int i = 0; i < enumerated_nodes.size(); i++){
+        enumerated_nodes_sum += enumerated_nodes[i];
+        pruned_nodes_sum += pruned_nodes[i];
+        std::cout << "enumerated_nodes[" << i << "] = " << enumerated_nodes[i] << ", pruned_nodes[" << i << "] = " << pruned_nodes[i] << std::endl;
+    }
+    std::cout << "Total enumerated nodes: " << enumerated_nodes_sum << endl;
+    std::cout << "Total pruned nodes: " << pruned_nodes_sum << endl;
+    std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
+    std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
 
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
     std::cout << "------------------------" << thread_total << " thread"
@@ -726,10 +734,12 @@ void solver::solve_parallel()
 
     work_remaining = std::vector<std::atomic<unsigned long long>>(thread_cnt); // PROGRESS initializing work remaining vector
     enumerated_nodes = std::vector<unsigned long long>(thread_cnt);
+    pruned_nodes = std::vector<unsigned long long>(thread_cnt);
     for (int i = 0; i < thread_cnt; i++)
     {
         work_remaining[i] = ULLONG_MAX;
         enumerated_nodes[i] = 0;
+        pruned_nodes[i] = 0;
     }
 
     for (int i = 0; i < thread_total; i++)
@@ -932,7 +942,8 @@ void solver::enumerate()
         }
 
         // DIAGNOSTIC: enum_nodes
-        // enumerated_nodes[thread_id] += ready_node_count;
+        enumerated_nodes[thread_id] += ready_node_count;
+        pruned_nodes[thread_id] += pruned_count;
 
         // Sort the ready list and push into local pool
         if (!ready_list.empty())
