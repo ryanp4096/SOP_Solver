@@ -37,6 +37,8 @@ static bool enable_threadstop = false;
 static bool enable_lkh = true;
 static bool enable_heuristic = false; // heuristic to treat multiple history table as one single history table when the global pool is empty (because when the pool is empty we are exploring deeper in the tree and keeping the bottom tables would be helpful)
 // static bool enable_progress_estimation = false;
+static bool enable_process_lkh_best_tour = true;
+static bool enable_reuse_lkh_thread = true;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -260,6 +262,9 @@ void solver::assign_parameter(vector<string> setting)
         enable_lkh = true;
 
     lkh_end_time = atoi(setting[15].c_str());
+    if (lkh_end_time < 0) {
+        lkh_end_time = INT_MAX;
+    }
     std::cout << "LKH end time after inactivity = " << lkh_end_time
                 << " seconds" << std::endl;
 
@@ -287,6 +292,10 @@ void solver::assign_parameter(vector<string> setting)
         std::cout << "Heuristic to treat multiple history table as one single history table is enabled" << std::endl;
     else
         std::cout << "Heuristic to treat multiple history table as one single history table is disabled" << std::endl;
+    
+    enable_process_lkh_best_tour = atoi(setting[17].c_str());
+    enable_reuse_lkh_thread = atoi(setting[17].c_str());
+
     return;
 }
 void print_workdone()
@@ -430,22 +439,27 @@ void solver::solve(string f_name, int thread_num)
             // Run LKH until optimal or timeout
             lkh();
 
-            // As soon as LKH is done, immediately start enumerate on a new subproblem
-            // Must wait until solve_parallel completes BB structures (work_remaining, global_pool, local_pools)
-            while (!parallel_setup_complete.load() && !BB_Complete) {
-                std::this_thread::yield();
-            }
+            if (enable_reuse_lkh_thread) {
+                // As soon as LKH is done, immediately start enumerate on a new subproblem
+                // Must wait until solve_parallel completes BB structures (work_remaining, global_pool, local_pools)
+                while (!parallel_setup_complete.load() && !BB_Complete) {
+                    std::this_thread::yield();
+                }
 
-            int lkh_thread_index = thread_total; // Use the next available index
-            solver lkh_solver;
-            lkh_solver.problem_state = default_state;
-            lkh_solver.thread_id = lkh_thread_index;
-            lkh_solver.instance_size = instance_size;
-            if (!BB_Complete){
-                lkh_solver.enumerate();
-            }
+                std::cout << "Reusing lkh thread for branch and bound\n";
                 
-            std::cout << "Enumerate (reused LKH thread) finished\n";
+                int lkh_thread_index = thread_total; // Use the next available index
+                solver lkh_solver;
+                lkh_solver.problem_state = default_state;
+                lkh_solver.thread_id = lkh_thread_index;
+                lkh_solver.instance_size = instance_size;
+
+                if (!BB_Complete){
+                    lkh_solver.enumerate();
+                }
+
+                std::cout << "Enumerate (reused LKH thread) finished\n";
+            }
         });
     }
 
@@ -1083,9 +1097,11 @@ void solver::enumerate()
             // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
                 if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
                 {
-                    cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
+                    if (enable_process_lkh_best_tour) {
+                        cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
 
-                    processBestTour();
+                        processBestTour();
+                    }
                     lkh_entry_processed = true;
                 }
             }

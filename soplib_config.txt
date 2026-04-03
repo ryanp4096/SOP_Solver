@@ -48,3 +48,9 @@ END_LKH_TIME = 100
 
 // Time in seconds that decide wheather the LKH entry is stable i.e. unchanged for this amount of time and should be processed
 STABLE_LKH_ENTRY_DURATION = 10
+
+// Process the best lkh tour into the history table after lkh end time reached (0 = disable, 1 = enable)
+PROCESS_LKH_BEST_TOUR = 1
+
+// Reuse lkh thread to run branch and bound after lkh end time reached (0 = disable, 1 = enable)
+REUSE_LKH_THREAD = 1
