@@ -151,7 +151,9 @@ pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;
 
 ///////////Diagnostic Variables//////////
 static vector<unsigned long long> enumerated_nodes; // total number of nodes processed by each thread
+static vector<vector<unsigned long long>> enumerated_nodes_by_depth;
 static vector<unsigned long long> pruned_nodes;
+static vector<vector<unsigned long long>> pruned_nodes_by_depth;
 static atomic<unsigned long long> not_best_suffix_count(0);
 static atomic<int> times_work_stolen;
 static atomic<int> steal_misses;
@@ -474,16 +476,26 @@ void solver::solve(string f_name, int thread_num)
     // DIAGNOSTIC : Enumerated Nodes
     unsigned long long enumerated_nodes_sum = 0;
     unsigned long long pruned_nodes_sum = 0;
+    vector<unsigned long long> enumerated_nodes_sum_by_depth(instance_size + 1);
+    vector<unsigned long long> pruned_nodes_sum_by_depth(instance_size + 1);
     for (int i = 0; i < enumerated_nodes.size(); i++)
     {
         enumerated_nodes_sum += enumerated_nodes[i];
         pruned_nodes_sum += pruned_nodes[i];
+        for (int d = 0; d < instance_size + 1; d++) {
+            enumerated_nodes_sum_by_depth[d] += enumerated_nodes_by_depth[i][d];
+            pruned_nodes_sum_by_depth[d] += pruned_nodes_by_depth[i][d];
+        }
         std::cout << "enumerated_nodes[" << i << "] = " << enumerated_nodes[i] << ", pruned_nodes[" << i << "] = " << pruned_nodes[i] << std::endl;
     }
     std::cout << "Total enumerated nodes: " << enumerated_nodes_sum << endl;
     std::cout << "Total pruned nodes: " << pruned_nodes_sum << endl;
     std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
     std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
+    for (int d = 0; d < instance_size + 1; d++) {
+        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << endl;
+    }
+    
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -813,6 +825,13 @@ void solver::solve_parallel()
     work_remaining = std::vector<std::atomic<unsigned long long>>(thread_cnt + 1);
     enumerated_nodes = std::vector<unsigned long long>(thread_cnt + 1);
     pruned_nodes = std::vector<unsigned long long>(thread_cnt + 1);
+    enumerated_nodes_by_depth = vector<vector<unsigned long long>>(thread_cnt + 1);
+    pruned_nodes_by_depth = vector<vector<unsigned long long>>(thread_cnt + 1);
+    for (int i = 0; i < thread_cnt + 1; i++) {
+        enumerated_nodes_by_depth[i] = vector<unsigned long long>(instance_size + 1);
+        pruned_nodes_by_depth[i] = vector<unsigned long long>(instance_size + 1);
+    }
+
     float current_time = main_timer.get_time_seconds();
     for (int i = 0; i < thread_cnt + 1; ++i)
     {
@@ -1289,6 +1308,8 @@ void solver::enumerate()
         // DIAGNOSTIC: enum_nodes
         enumerated_nodes[thread_id] += ready_node_count;
         pruned_nodes[thread_id] += pruned_count;
+        enumerated_nodes_by_depth[thread_id][problem_state.current_path.size()] += ready_node_count;
+        pruned_nodes_by_depth[thread_id][problem_state.current_path.size()] += pruned_count;
 
         // Sort the ready list and push into local pool
         if (!ready_list.empty())
