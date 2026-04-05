@@ -296,7 +296,7 @@ void solver::assign_parameter(vector<string> setting)
         std::cout << "Heuristic to treat multiple history table as one single history table is disabled" << std::endl;
     
     enable_process_lkh_best_tour = atoi(setting[17].c_str());
-    enable_reuse_lkh_thread = atoi(setting[17].c_str());
+    enable_reuse_lkh_thread = atoi(setting[18].c_str());
 
     return;
 }
