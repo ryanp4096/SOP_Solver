@@ -173,6 +173,11 @@ static mutex steal_times_lock;
 // something to track history entry usage
 static vector<boost::dynamic_bitset<>> lkh_path_by_depth;
 static vector<int> lkh_last_node_by_depth;
+static vector<int> lkh_cost_by_depth;
+static vector<atomic<int>> nodes_before_match_by_depth;
+static vector<vector<boost::dynamic_bitset<>>> lkh_subpaths_by_depth;
+static vector<vector<pair<int, int>>> lkh_subpath_end_nodes_by_depth;
+static vector<vector<int>> lkh_subpath_cost_by_depth;
 static bool lkh_processed_by_depth = false;
 /////////////////////////////////////////
 
@@ -187,13 +192,35 @@ bool local_pool_sort(const path_node &src, const path_node &dest) { return src.l
 
 enum NodeAction {PRUNE_BEST_COST, PRUNE_HISTORY, PRUNE_LOWER_BOUND, NOT_PRUNED};
 static vector<vector<unsigned long long>> match_actions;
+static vector<vector<unsigned long long>> subpath_match_actions;
 static vector<vector<unsigned long long>> no_match_actions;
 void log_node(int thread, sop_state *problem_state, NodeAction action) {
     if (lkh_processed_by_depth) {
         int depth = problem_state->current_path.size();
         if (problem_state->history_key.second == lkh_last_node_by_depth[depth] && problem_state->history_key.first == lkh_path_by_depth[depth]) {
+            if (problem_state->current_cost <= lkh_cost_by_depth[depth]) {
+                int pn = nodes_before_match_by_depth[depth]++;
+                cout << "BB matched LKH's best prefix cost for depth " << depth << " at time " << main_timer.get_time_seconds() << " previous nodes " << pn << endl;
+            } else {
+                if ((nodes_before_match_by_depth[depth]++) == 0) {
+                    cout << "BB first match with LKH's best prefix for depth " << depth << " at time " << main_timer.get_time_seconds() << endl;
+                }
+            }
             match_actions[thread][action]++;
         } else {
+            for (int i = 0; i < lkh_subpaths_by_depth[depth].size(); i++) {
+                if (
+                    problem_state->current_path[1] == lkh_subpath_end_nodes_by_depth[depth][i].first &&
+                    problem_state->current_path[depth - 1] == lkh_subpath_end_nodes_by_depth[depth][i].second &&
+                    problem_state->history_key.first == lkh_subpaths_by_depth[depth][i]
+                ) {
+                    if (problem_state->current_cost <= lkh_subpath_cost_by_depth[depth][i]) {
+                        cout << "BB matched LKH's best subpath prefix cost for depth " << depth << " prefix " << i << " at time " << main_timer.get_time_seconds() << endl;
+                    }
+                    subpath_match_actions[thread][action]++;
+                    return;
+                }
+            }
             no_match_actions[thread][action]++;
         }
     } else {
@@ -484,6 +511,7 @@ void solver::solve(string f_name, int thread_num)
                     cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
                     lkh_solver.processBestTour();
                 }
+                cout << "Done processing LKH at time " << main_timer.get_time_seconds() << endl;
                 lkh_entry_processed = true;
 
                 if (enable_reuse_lkh_thread)
@@ -525,26 +553,32 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
     std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
     for (int d = 0; d < instance_size + 1; d++) {
-        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << endl;
+        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << nodes_before_match_by_depth[d] << endl;
     }
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
     vector<unsigned long long> match_actions_sum = vector<unsigned long long>(4);
     vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(4);
+    vector<unsigned long long> subpath_match_actions_sum = vector<unsigned long long>(4);
     for (int i = 0; i < match_actions.size(); i++) {
         for (int j = 0; j < 4; j++) {
             match_actions_sum[j] += match_actions[i][j];
             no_match_actions_sum[j] += no_match_actions[i][j];
+            subpath_match_actions_sum[j] += subpath_match_actions[i][j];
         }
     }
-    std::cout << "[Match] Not Pruned:               " << match_actions_sum[NOT_PRUNED] << endl;
-    std::cout << "[Match] Pruned by best cost:      " << match_actions_sum[PRUNE_BEST_COST] << endl;
-    std::cout << "[Match] Pruned by history:        " << match_actions_sum[PRUNE_HISTORY] << endl;
-    std::cout << "[Match] Pruned by lower bound:    " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
-    std::cout << "[No Match] Not Pruned:            " << no_match_actions_sum[NOT_PRUNED] << endl;
-    std::cout << "[No Match] Pruned by best cost:   " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
-    std::cout << "[No Match] Pruned by history:     " << no_match_actions_sum[PRUNE_HISTORY] << endl;
-    std::cout << "[No Match] Pruned by lower bound: " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+    std::cout << "[Match] Not Pruned:                   " << match_actions_sum[NOT_PRUNED] << endl;
+    std::cout << "[Match] Pruned by best cost:          " << match_actions_sum[PRUNE_BEST_COST] << endl;
+    std::cout << "[Match] Pruned by history:            " << match_actions_sum[PRUNE_HISTORY] << endl;
+    std::cout << "[Match] Pruned by lower bound:        " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+    std::cout << "[Sub Match] Not Pruned:               " << subpath_match_actions_sum[NOT_PRUNED] << endl;
+    std::cout << "[Sub Match] Pruned by best cost:      " << subpath_match_actions_sum[PRUNE_BEST_COST] << endl;
+    std::cout << "[Sub Match] Pruned by history:        " << subpath_match_actions_sum[PRUNE_HISTORY] << endl;
+    std::cout << "[Sub Match] Pruned by lower bound:    " << subpath_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+    std::cout << "[No Match] Not Pruned:                " << no_match_actions_sum[NOT_PRUNED] << endl;
+    std::cout << "[No Match] Pruned by best cost:       " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
+    std::cout << "[No Match] Pruned by history:         " << no_match_actions_sum[PRUNE_HISTORY] << endl;
+    std::cout << "[No Match] Pruned by lower bound:     " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
 
 
     std::cout << "Best Tour: ";
@@ -883,9 +917,11 @@ void solver::solve_parallel()
     }
     match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     no_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
+    subpath_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     for (int i = 0; i < thread_cnt + 1; i++) {
         match_actions[i] = vector<unsigned long long>(4);
         no_match_actions[i] = vector<unsigned long long>(4);
+        subpath_match_actions[i] = vector<unsigned long long>(4);
     }
 
     float current_time = main_timer.get_time_seconds();
@@ -1048,6 +1084,13 @@ void solver::processBestTour()
 
         lkh_path_by_depth = vector<boost::dynamic_bitset<>>(instance_size + 1);
         lkh_last_node_by_depth = vector<int>(instance_size + 1, -1);
+        lkh_cost_by_depth = vector<int>(instance_size + 1, -1);
+        nodes_before_match_by_depth = vector<atomic<int>>(instance_size + 1);
+        lkh_subpaths_by_depth = vector<vector<boost::dynamic_bitset<>>>(instance_size + 1);
+        lkh_subpath_end_nodes_by_depth = vector<vector<pair<int, int>>>(instance_size + 1);
+        lkh_subpath_cost_by_depth = vector<vector<int>>(instance_size + 1);
+
+        for (int i = 0; i < instance_size + 1; i ++) nodes_before_match_by_depth[i] = 0;
 
         // Now, check the prefix paths in the history table
         boost::dynamic_bitset<> bit_vector(instance_size, false); // Initialize the key bitset
@@ -1074,8 +1117,41 @@ void solver::processBestTour()
             //            << " | Remaining Cost: " << suffix_cost << std::endl;
 
             // Create the key with the size of the current prefix path
-            lkh_path_by_depth[i + 1] = bit_vector;
-            lkh_last_node_by_depth[i + 1] = dst;
+            int depth = i + 1;
+
+            lkh_path_by_depth[depth] = bit_vector;
+            lkh_last_node_by_depth[depth] = dst;
+            lkh_cost_by_depth[depth] = prefix_cost;
+
+            lkh_subpaths_by_depth[depth] = vector<boost::dynamic_bitset<>>();
+            lkh_subpath_end_nodes_by_depth[depth] = vector<pair<int, int>>();
+            lkh_subpath_cost_by_depth[depth] = vector<int>();
+
+            if (depth >= 4) {
+                boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
+                int subpath_cost = prefix_cost;
+                for (int j = 1; j <= instance_size - depth; j++) {
+                    // save subpath
+                    int start = localBestTour[j] - 1;
+                    int end = localBestTour[j + depth - 2] - 1;
+                    lkh_subpaths_by_depth[depth].push_back(subpath_bit_vector);
+                    lkh_subpath_end_nodes_by_depth[depth].push_back(make_pair(start, end));
+                    lkh_subpath_cost_by_depth[depth].push_back(subpath_cost);
+                    
+                    // remove old first of subpath (to shift right)
+                    int start_src = localBestTour[j] - 1;
+                    int start_dst = localBestTour[j + 1] - 1;
+                    subpath_bit_vector[start_src] = 0;
+                    subpath_cost -= cost_graph[start_src][start_dst].weight;
+
+                    // add new last to subpath (to shift right)
+                    int end_src = localBestTour[j + depth - 2] - 1;
+                    int end_dst = localBestTour[j + depth - 1] - 1;
+                    subpath_bit_vector[end_dst] = 1;
+                    subpath_cost += cost_graph[end_src][end_dst].weight;
+                }
+            }
+
 
             if (enable_process_lkh_best_tour) {
                 pair<boost::dynamic_bitset<>, int> prefixKey = make_pair(bit_vector, dst); // The second element is the last element of the prefix
@@ -1930,9 +2006,9 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
     else
     {
         not_best_suffix_count++;
-        const char *dir = cost == content.prefix_cost ? "==" : (cost > content.prefix_cost ? ">" : "<");
-        std::cout << "Not Best Suffix Matched   Path Cost " << cost << "  " << dir << "  Saved Cost " << content.prefix_cost;
-        std::cout << "   Depth " << key.first.count() << "   Time " << main_timer.get_time_seconds() << endl;
+        // const char *dir = cost == content.prefix_cost ? "==" : (cost > content.prefix_cost ? ">" : "<");
+        // std::cout << "Not Best Suffix Matched   Path Cost " << cost << "  " << dir << "  Saved Cost " << content.prefix_cost;
+        // std::cout << "   Depth " << key.first.count() << "   Time " << main_timer.get_time_seconds() << endl;
         // we don't have the best suffix, so if the costs are equal, we need to explore that path
         if (cost > content.prefix_cost)
             return false;
