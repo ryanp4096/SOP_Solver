@@ -187,10 +187,30 @@ bool global_pool_sort(const path_node &src, const path_node &dest) { return src.
 // sort by decreasing lower bound (back is the best)
 bool local_pool_sort(const path_node &src, const path_node &dest) { return src.lower_bound > dest.lower_bound; }
 
+static double gp_const;     // store the total work in the global pool initially
+static double gp_remaining; // variable to store the number of remaining work from global pool
+bool stop_lkh_flag = false;
+bool lkh_entry_processed = false;
+std::atomic<bool> is_first_lkh_thread_use{true};
+void lkh()
+{
+    while (!BB_Complete && !stop_lkh_flag)
+    {
+        LKH(&filename[0], initial_LKHRun);
+        if (initial_LKHRun)
+        {
+            initial_LKHRun = false;
+        }
+        BB_SolFound = false;
+    }
+    return;
+}
+
 enum NodeAction {PRUNE_BEST_COST, PRUNE_HISTORY, PRUNE_LOWER_BOUND, NOT_PRUNED};
 string node_action_names[] = {"PRUNE_BEST_COST", "PRUNE_HISTORY", "PRUNE_LOWER_BOUND", "NOT PRUNED"};
 static vector<vector<unsigned long long>> match_actions;
 static vector<vector<unsigned long long>> no_match_actions;
+static vector<int> nodes_before_lkh_processed;
 void log_node(int thread, sop_state *problem_state, NodeAction action) {
     if (lkh_processed_by_depth) {
         int depth = problem_state->current_path.size();
@@ -209,31 +229,13 @@ void log_node(int thread, sop_state *problem_state, NodeAction action) {
         }
     } else {
         static bool printed = false;
-        if (!printed) {
+        if (lkh_entry_processed && !printed) {
             cout << "!! lkh depth table not set up" << endl;
             printed = true; // avoids printing error message repeatedly
         }
+        nodes_before_lkh_processed[thread]++;
         no_match_actions[thread][action]++;
     }
-}
-
-static double gp_const;     // store the total work in the global pool initially
-static double gp_remaining; // variable to store the number of remaining work from global pool
-bool stop_lkh_flag = false;
-bool lkh_entry_processed = false;
-std::atomic<bool> is_first_lkh_thread_use{true};
-void lkh()
-{
-    while (!BB_Complete && !stop_lkh_flag)
-    {
-        LKH(&filename[0], initial_LKHRun);
-        if (initial_LKHRun)
-        {
-            initial_LKHRun = false;
-        }
-        BB_SolFound = false;
-    }
-    return;
 }
 
 void print_diagnostics()
@@ -537,7 +539,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
     std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
     for (int d = 0; d < instance_size + 1; d++) {
-        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << nodes_before_match_by_depth[d] << endl;
+        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << (lkh_processed_by_depth ? nodes_before_match_by_depth[d].load() : 0) << endl;
     }
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
@@ -558,6 +560,10 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "[No Match] Pruned by history:     " << no_match_actions_sum[PRUNE_HISTORY] << endl;
     std::cout << "[No Match] Pruned by lower bound: " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
 
+    int nodes_before_lkh_processed_sum = 0;
+    for (int i = 0; i < nodes_before_lkh_processed.size(); i++)
+        nodes_before_lkh_processed_sum += nodes_before_lkh_processed[i];
+    std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -899,6 +905,7 @@ void solver::solve_parallel()
         match_actions[i] = vector<unsigned long long>(4);
         no_match_actions[i] = vector<unsigned long long>(4);
     }
+    nodes_before_lkh_processed = vector<int>(thread_cnt + 1);
 
     float current_time = main_timer.get_time_seconds();
     for (int i = 0; i < thread_cnt + 1; ++i)
@@ -1036,8 +1043,18 @@ void solver::processBestTour()
         pthread_mutex_unlock(&Sol_lock);
         // Now print the copied tour
 
+        cout << "LKH Best Tour: ";
+        for (int i = 0; i <= instance_size; i++)
+            cout << localBestTour[i] << " ";
+        cout << endl;
+
         // Ensure the tour starts from node 1
         rotateTourToStartFromNode1(localBestTour, instance_size);
+
+        cout << "Rotated Tour: ";
+        for (int i = 0; i <= instance_size; i++)
+            cout << localBestTour[i] << " ";
+        cout << endl;
 
         int safety_cost_check_total = 0;
         // Compute total cost using prefix sum
@@ -1047,6 +1064,11 @@ void solver::processBestTour()
             int src = localBestTour[i] - 1;
             int dst = localBestTour[(i + 1)] - 1;
             // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
+            if (cost_graph[src][dst].weight < 0) {
+                cout << "best tour index " << i << " had negative cost between node " << src << " and " << dst << endl;
+                isProcessingBestTour.store(false);
+                return;
+            }
             safety_cost_check_total += cost_graph[src][dst].weight;
         }
         std::cout << "Best Tour with cost: " << safety_cost_check_total << std::endl;
@@ -1176,6 +1198,11 @@ void solver::enumerate()
     {
         while (!lkh_entry_processed)
         {
+            if (thread_id == 0 && best_cost_temp != INT_MAX && best_cost_temp == best_cost && last_updated_time_by_LKH == 0)
+            {
+                last_updated_time_by_LKH = main_timer.get_time_seconds();
+                std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
+            }
             if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time))
             {
                 cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
@@ -1203,22 +1230,22 @@ void solver::enumerate()
             // last updated best cost is not by LKH or LKH has not updated anything yet
             if (last_updated_time_by_LKH == 0)
             {
-                last_updated_time_by_LKH = lkh_timer.get_time_seconds();
+                last_updated_time_by_LKH = main_timer.get_time_seconds();
                 std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
             }
             else
             {  
             // TEMP to make sure the LKH thread is th ethread that is processing it, 
             // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
-                if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
-                {
-                    if (enable_process_lkh_best_tour) {
-                        cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
+                // if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
+                // {
+                //     if (enable_process_lkh_best_tour) {
+                //         cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
 
-                        processBestTour();
-                    }
-                    lkh_entry_processed = true;
-                }
+                //         processBestTour();
+                //     }
+                //     lkh_entry_processed = true;
+                // }
             }
             
         }
