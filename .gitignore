@@ -4,3 +4,4 @@ sop_solver
 
 *.log
 *.callgrind
+*.bin

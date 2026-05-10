@@ -1,6 +1,7 @@
 #ifndef SOLVER_H
 #define SOLVER_H
 
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <sstream>
