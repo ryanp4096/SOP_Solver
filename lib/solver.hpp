@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <sys/resource.h>
 
 #include <boost/container/vector.hpp>
 #include <boost/dynamic_bitset.hpp>

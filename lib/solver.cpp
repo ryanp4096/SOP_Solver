@@ -686,6 +686,13 @@ void solver::solve(string f_name, int thread_num)
         std::cout << steal_times[i] << endl;
     }
     print_workdone();
+
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        long max_memory = usage.ru_maxrss;
+        std::cout << "max memory: " << max_memory / 1000 << " MB" << std::endl;
+    }
+
     // to count the number of entries at different level in history table and their references
     // history_table.track_entries_and_references();
 
@@ -1356,9 +1363,6 @@ void solver::enumerate()
             { // only consider nodes that haven't already been taken, and who have no remaining dependencies
                 ready_node_count++;
                 trace_write(taken_node, 2);
-                trace_write(problem_state.current_cost, 4);
-                trace_write(best_cost, 4);
-                trace_match_check(&problem_state);
 
                 // triming
                 int source_node = problem_state.current_path.back();
@@ -1373,6 +1377,10 @@ void solver::enumerate()
 
                 HistoryNode *his_node = NULL;
                 // Active_Node* active_node = NULL;
+
+                trace_write(problem_state.current_cost, 4);
+                trace_write(best_cost, 4);
+                trace_match_check(&problem_state);
 
                 if (problem_state.current_cost >= best_cost)
                 { // backtracking
