@@ -31,6 +31,7 @@
 #include "local_pool.hpp"
 #include "graph.hpp"
 #include "hungarian.hpp"
+#include "config.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -193,7 +194,7 @@ private:
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(vector<string> setting);
+    void assign_parameter(Config config);
     /* Primary function that initializes and begins the solver. */
     void solve(string f_name, int thread_num);
 };

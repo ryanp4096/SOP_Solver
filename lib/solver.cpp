@@ -202,48 +202,36 @@ void print_diagnostics()
 /* ---------------------       END        -------------------------*/
 /* --------------------- Static Functions -------------------------*/
 
-void solver::assign_parameter(vector<string> setting)
+void solver::assign_parameter(Config config)
 {
-    t_limit = atoi(setting[0].c_str());
+    t_limit = config.time_limit;
     std::cout << "Time limit = " << t_limit << std::endl;
 
-    global_pool_size = atoi(setting[1].c_str());
+    global_pool_size = config.global_pool_size;
     std::cout << "GPQ size = " << global_pool_size << std::endl;
 
-    inhis_mem_limit = atof(setting[3].c_str());
+    inhis_mem_limit = config.memory_percent;
     std::cout << "History table mem limit = " << inhis_mem_limit << std::endl;
 
-    // inhis_depth = atof(setting[4].c_str());
+    // inhis_depth = config.history_depth;
     // std::cout << "History table depth to always add = " << inhis_depth << std::endl;
 
-    // exploitation_per = atof(setting[5].c_str())/float(100);
+    // exploitation_per = config.exploitation_percent;
     // std::cout << "Restart exploitation/exploration ratio is " << exploitation_per << std::endl;
-    // group_sample_time = atoi(setting[6].c_str());
+    // group_sample_time = config.group_sample_time;
     // std::cout << "Group sample time = " << group_sample_time << std::endl;
-    // tgroup_ratio = atoi(setting[7].c_str());
+    // tgroup_ratio = config.group_thread_count;
     // std::cout << "Number of promising thread per exploitation group = " << tgroup_ratio << std::endl;
 
-    if (!atoi(setting[8].c_str()))
-        enable_workstealing = false;
-    else
-        enable_workstealing = true;
+    enable_workstealing = config.enable_work_stealing;
+    enable_threadstop = config.enable_thread_stopping;
+    enable_lkh = config.enable_lkh;
+    // enable_progress_estimation = config.enable_progress_estimation;
 
-    if (!atoi(setting[9].c_str()))
-        enable_threadstop = false;
-    else
-        enable_threadstop = true;
-
-    if (!atoi(setting[10].c_str()))
-        enable_lkh = false;
-    else
-        enable_lkh = true;
-
-    // if (!atoi(setting[11].c_str())) enable_progress_estimation = false;
-    // else enable_progress_estimation = true;
-    number_of_groups = atoi(setting[12].c_str());
+    number_of_groups = config.number_of_buckets;
     std::cout << "Number of groups = " << number_of_groups << std::endl;
 
-    bucket_size = atoi(setting[13].c_str());
+    bucket_size = config.bucket_size;
     if (bucket_size > 0)
         std::cout << "Group size in config = " << bucket_size << std::endl;
 
