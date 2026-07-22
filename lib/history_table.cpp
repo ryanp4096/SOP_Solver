@@ -53,15 +53,17 @@ HistoryNode *Memory_Module::retrieve_his_node()
 
 History_Table::History_Table(size_t size)
 {
-    struct sysinfo info;
-    if (sysinfo(&info) != 0)
-    {
-        cout << "can't retrieve system memory info\n";
-        exit(EXIT_FAILURE);
-    }
+    // struct sysinfo info;
+    // if (sysinfo(&info) != 0)
+    // {
+    //     cout << "can't retrieve system memory info\n";
+    //     exit(EXIT_FAILURE);
+    // }
+    MemoryInfo info = getSystemMemory();
+
     num_buckets = size;
-    total_ram = info.totalram;
-    max_size = (double)info.freeram * MEMORY_RESTRIC - (size * 4);
+    total_ram = info.totalBytes;
+    max_size = (double)info.availableBytes * MEMORY_RESTRIC - (size * 4);
     cout << "Total RAM (in bytes): " << total_ram / 1000000 << " MB" << std::endl;
     cout << "allowed RAM size (in bytes): " << max_size / 1000000 << " MB" << std::endl;
     current_size = 0;
@@ -102,13 +104,14 @@ size_t History_Table::get_current_size() { return current_size; }
 
 unsigned long History_Table::get_free_mem()
 {
-    struct sysinfo info;
-    if (sysinfo(&info) != 0)
-    {
-        cout << "can't retrieve sys mem info\n";
-        exit(1);
-    }
-    return (double)info.freeram;
+    // struct sysinfo info;
+    // if (sysinfo(&info) != 0)
+    // {
+    //     cout << "can't retrieve sys mem info\n";
+    //     exit(1);
+    // }
+    MemoryInfo info = getSystemMemory();
+    return (double)info.availableBytes;
 }
 
 void History_Table::print_curmem()
