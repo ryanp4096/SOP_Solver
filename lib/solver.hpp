@@ -32,6 +32,7 @@
 #include "graph.hpp"
 #include "hungarian.hpp"
 #include "config.hpp"
+#include "memory.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 

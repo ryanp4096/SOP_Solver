@@ -1,5 +1,10 @@
 #include "memory.hpp"
 
+static unsigned long long memoryLookupCount = 0;
+
+unsigned long long getMemoryLookupCount() { return memoryLookupCount; }
+
+
 #if defined(__linux__)
 
 #include <cstdint>
@@ -7,6 +12,8 @@
 #include <string>
 
 MemoryInfo getSystemMemory() {
+    memoryLookupCount++;
+
     std::ifstream file("/proc/meminfo");
 
     uint64_t totalBytes = 0;
@@ -40,6 +47,8 @@ MemoryInfo getSystemMemory() {
 #include <sys/sysctl.h>
 
 MemoryInfo getSystemMemory() {
+    memoryLookupCount++;
+
     // Get total physical memory
     uint64_t totalBytes = 0;
     size_t size = sizeof(totalBytes);

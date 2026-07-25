@@ -19,4 +19,8 @@ struct MemoryInfo {
  */
 MemoryInfo getSystemMemory();
 
+/**
+ * @brief Get number of times memory info is looked up
+ */
+unsigned long long getMemoryLookupCount();
 #endif
