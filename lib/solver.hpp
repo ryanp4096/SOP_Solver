@@ -23,7 +23,6 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <sys/resource.h>
 
 #include <boost/container/vector.hpp>
 #include <boost/dynamic_bitset.hpp>
@@ -34,6 +33,8 @@
 #include "graph.hpp"
 #include "hungarian.hpp"
 #include "trace.hpp"
+#include "config.hpp"
+#include "memory.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -209,7 +210,7 @@ private:
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(vector<string> setting);
+    void assign_parameter(Config config);
     /* Enable writing a trace file of the algorithm to the given path. */
     void enable_trace(string path);
     /* Primary function that initializes and begins the solver. */
