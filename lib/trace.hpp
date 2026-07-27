@@ -59,6 +59,11 @@ public:
     void close();
 
     /**
+     * @brief Check if trace file is opened
+     */
+    bool is_open();
+
+    /**
      * @brief Write bytes to the trace file.
      * @param data The data to write.
      * @param bytes The number of bytes to write.

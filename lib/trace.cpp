@@ -1,5 +1,7 @@
 #include "trace.hpp"
 
+#ifndef DISABLE_TRACE
+
 Trace::Trace() {
     opened = false;
 }
@@ -20,9 +22,13 @@ void Trace::close() {
     }
 }
 
+bool Trace::is_open() {
+    return opened;
+}
+
 void Trace::write(unsigned long long data, size_t bytes)
 {
-    if (!opened || !file.is_open()) return;
+    if (!opened) return;
     
     std::uint8_t d8;
     std::uint16_t d16;
@@ -60,3 +66,18 @@ void Trace::write(unsigned long long data, size_t bytes)
     }
     file.write(ptr, bytes);
 }
+
+#else
+
+/*
+ * If trace is disabled, trace class has no behavior.
+ * This allows compiler to optimize and remove trace functions to improve runtime.
+ */
+
+Trace::Trace() {}
+void Trace::open(string path) {}
+void Trace::close() {}
+bool Trace::is_open() { return false; }
+void Trace::write(unsigned long long data, size_t bytes) {}
+
+#endif

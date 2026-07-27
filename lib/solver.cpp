@@ -238,6 +238,8 @@ void log_node(int thread, sop_state *problem_state, NodeAction action) {
     }
 }
 void trace_match_check(Trace& trace, sop_state *problem_state) {
+    #ifndef DISABLE_TRACE
+    if (!trace.is_open()) return;
     if (!lkh_processed_by_depth) {
         trace.write(2, 1);
         return;
@@ -253,12 +255,16 @@ void trace_match_check(Trace& trace, sop_state *problem_state) {
     } else {
         trace.write(0, 1);
     }
+    #endif
 }
 void trace_initial_state(Trace& trace, sop_state *problem_state) {
+    #ifndef DISABLE_TRACE
+    if (!trace.is_open()) return;
     for (int i = 0; i < problem_state->current_path.size(); i++) {
         trace.write(problem_state->current_path.at(i), 2);
     }
     trace.write(TRACE_END_LIST, 2);
+    #endif
 }
 
 void print_diagnostics()
