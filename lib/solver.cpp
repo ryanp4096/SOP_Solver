@@ -43,6 +43,7 @@ static bool enable_heuristic = false; // heuristic to treat multiple history tab
 // static bool enable_progress_estimation = false;
 static bool enable_process_lkh_best_tour = true;
 static bool enable_reuse_lkh_thread = true;
+static bool enable_finish_lkh_before_bb = false;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -383,6 +384,7 @@ void solver::assign_parameter(vector<string> setting)
     
     enable_process_lkh_best_tour = atoi(setting[17].c_str());
     enable_reuse_lkh_thread = atoi(setting[18].c_str());
+    enable_finish_lkh_before_bb = atoi(setting[19].c_str());
 
     return;
 }
@@ -1265,7 +1267,7 @@ void solver::start_thread()
 void solver::enumerate()
 {
     // wait for lkh to finish before enumerating. for debug only
-    if (!lkh_entry_processed)
+    if (enable_finish_lkh_before_bb && !lkh_entry_processed)
     {
         while (!lkh_entry_processed)
         {
