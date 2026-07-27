@@ -54,6 +54,8 @@ public:
     std::string path;
     std::ifstream file;
     std::vector<int> current_path;
+    unsigned long long version_number;
+    int thread_id;
 
     unsigned long long enumerated_nodes = 0;
     unsigned long long ready_nodes = 0;
@@ -61,6 +63,7 @@ public:
     
     TraceReader(const std::string& path);
     unsigned long long next(size_t bytes);
+    void read_header();
     void parse();
     void parse_initial_state();
     unsigned long long parse_node();

@@ -33,7 +33,13 @@ unsigned long long TraceReader::next(size_t bytes) {
     }
 }
 
+void TraceReader::read_header() {
+    version_number = next(4);
+    thread_id = next(1);
+}
+
 void TraceReader::parse() {
+    read_header();
     while (!file.eof()) {
         parse_initial_state();
         parse_node();

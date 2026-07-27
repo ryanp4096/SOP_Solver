@@ -33,6 +33,7 @@
 #include "local_pool.hpp"
 #include "graph.hpp"
 #include "hungarian.hpp"
+#include "trace.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -124,6 +125,9 @@ private:
     //  int last_node = -1;
     //  bool stop_init = false; //INVESTIGATE; might be whether this thread has ever been stopped before
 
+    // Trace File
+    Trace trace;
+
     /* Build graph based on .sop input file specified in filename. */
     void retrieve_input();
     /* Transforms dependency and Hungarian graphs, adding redundant edges from grandparents, great grandparents, etc., and initializes in_degree. */
@@ -146,6 +150,8 @@ private:
 
     /* To process the best tour path provided by LKH */
     void processBestTour();
+    /* Starts enumeration */
+    void start_thread();
     /* Recursive function that each thread runs to process its assigned spaces of the enumeration tree, checking one node and then its children and their children, etc. */
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.

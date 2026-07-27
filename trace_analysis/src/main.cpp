@@ -35,6 +35,8 @@ void single(char *path) {
 void compare(char *path1, char *path2) {
     TraceReader r1(path1);
     TraceReader r2(path2);
+    r1.read_header();
+    r2.read_header();
 
     while (!r1.file.eof() && !r2.file.eof()) {
         r1.parse_initial_state();
