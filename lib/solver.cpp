@@ -8,6 +8,10 @@ extern "C"
 #define TABLE_SIZE 541065431 // number of buckets in the history table
 std::atomic<bool> isProcessingBestTour(false);
 
+static bool trace_enabled = false;
+static string trace_path;
+static string trace_path_ext;
+
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
 static string filename;      // name of the sop input file
@@ -292,6 +296,22 @@ void print_diagnostics()
 }
 /* ---------------------       END        -------------------------*/
 /* --------------------- Static Functions -------------------------*/
+
+void solver::enable_trace(string path)
+{
+    #ifndef DISABLE_TRACE
+    trace_enabled = true;
+    size_t ext_index = path.find_last_of('.');
+    if (ext_index == string::npos || path.length() - ext_index > 5) {
+        trace_path = path;
+    } else {
+        trace_path = path.substr(0, ext_index);
+        trace_path_ext = path.substr(ext_index);
+    }
+    #else
+    cout << "[Trace] Must compile with `make ENABLE_TRACE=1` to use trace" << endl;
+    #endif
+}
 
 void solver::assign_parameter(vector<string> setting)
 {
@@ -1229,10 +1249,16 @@ void solver::processBestTour()
 
 void solver::start_thread()
 {
-    trace.open("data.bin");
-    trace.write(TRACE_VERSION_NUMBER, 4);
-    trace.write(thread_id, 1);
-    trace_initial_state(trace, &problem_state);
+    if (trace_enabled) {
+        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread)) {
+            trace.open(trace_path + trace_path_ext);
+        } else {
+            trace.open(trace_path + to_string(thread_id) + trace_path_ext);
+        }
+        trace.write(TRACE_VERSION_NUMBER, 4);
+        trace.write(thread_id, 1);
+        trace_initial_state(trace, &problem_state);
+    }
     enumerate();
 }
 

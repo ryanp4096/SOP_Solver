@@ -39,6 +39,9 @@ int main(int argc, char *argv[])
 
     setpriority(PRIO_PROCESS, 0, -20);
 
+    if (argc > 4) {
+        s.enable_trace(argv[4]);
+    }
     s.assign_parameter(setting);
     s.solve(argv[1], atoi(argv[2]));
 

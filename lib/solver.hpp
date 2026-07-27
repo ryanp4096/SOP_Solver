@@ -210,6 +210,8 @@ private:
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
     void assign_parameter(vector<string> setting);
+    /* Enable writing a trace file of the algorithm to the given path. */
+    void enable_trace(string path);
     /* Primary function that initializes and begins the solver. */
     void solve(string f_name, int thread_num);
 };
