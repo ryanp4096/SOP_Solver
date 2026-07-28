@@ -54,6 +54,9 @@ struct Config {
     /* Enable Heuristic: Treat 3 subtable as 1 table if the global pool is empty before hitting the first threshold */
     bool enable_heuristic = false;
 
+    /* Process each subpath of the lkh tour as a separate history table entry */
+    bool process_lkh_subpaths = true;
+
     /* UNUSED */
 
     int assign_workload_level = 150;

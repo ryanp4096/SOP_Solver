@@ -139,6 +139,9 @@ void set_key(Config *config, string key, string value) {
 
     else if (key == "stable_lkh_entry_duration")
         config->stable_lkh_entry_duration = atoi(cvalue);
+
+    else if (key == "process_lkh_subpaths")
+        config->process_lkh_subpaths = atoi(cvalue);
     
     else {
         cout << "[Config] Unknown key " << key << endl;

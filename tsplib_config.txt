@@ -57,3 +57,6 @@ REUSE_LKH_THREAD = 1
 
 // Finish lkh before starting branch and bound, instead of running in parallel (for debugging) (1 for enable 0 for disable)
 FINISH_LKH_BEFORE_BB = 0
+
+// Process each subpath of the lkh tour as a separate history table entry (1 for enable 0 for disable)
+PROCESS_LKH_SUBPATHS = 1
