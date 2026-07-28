@@ -221,65 +221,110 @@ static vector<vector<unsigned long long>> match_actions;
 static vector<vector<unsigned long long>> subpath_match_actions;
 static vector<vector<unsigned long long>> no_match_actions;
 static vector<int> nodes_before_lkh_processed;
-void log_node(int thread, sop_state *problem_state, NodeAction action) {
-    if (lkh_processed_by_depth) {
-        int depth = problem_state->current_path.size();
-        if (problem_state->history_key.second == lkh_last_node_by_depth[depth] && problem_state->history_key.first == lkh_path_by_depth[depth]) {
-            if (problem_state->current_cost <= lkh_cost_by_depth[depth]) {
-                int pn = nodes_before_match_by_depth[depth]++;
-                cout << "BB matched LKH's best prefix cost for depth " << depth << " at time " << main_timer.get_time_seconds() << " previous nodes " << pn << " action: " << node_action_names[action] << endl;
-            } else {
-                if ((nodes_before_match_by_depth[depth]++) == 0) {
-                    cout << "BB first match with LKH's best prefix for depth " << depth << " at time " << main_timer.get_time_seconds() << " action: " << node_action_names[action] << endl;
-                }
-            }
-            match_actions[thread][action]++;
-        } else {
-            for (int i = 0; i < lkh_subpaths_by_depth[depth].size(); i++) {
-                if (
-                    // problem_state->current_path[1] == lkh_subpath_end_nodes_by_depth[depth][i].first &&
-                    problem_state->current_path[depth - 1] == lkh_subpath_end_nodes_by_depth[depth][i].second &&
-                    problem_state->history_key.first == lkh_subpaths_by_depth[depth][i]
-                ) {
-                    if (problem_state->current_cost <= lkh_subpath_cost_by_depth[depth][i]) {
-                        cout << "BB matched LKH's best subpath prefix cost for depth " << depth << " prefix " << i << " at time " << main_timer.get_time_seconds() << endl;
-                    }
-                    subpath_match_actions[thread][action]++;
-                    return;
-                }
-            }
-            no_match_actions[thread][action]++;
-        }
-    } else {
+
+struct MatchInfo {
+    bool available;
+    bool matched_prefix;
+    bool matched_subpath;
+    int match_cost;
+};
+
+MatchInfo check_match(sop_state& problem_state) {
+    if (!lkh_processed_by_depth)
+        return {
+            .available = false
+        };
+    
+    int depth = problem_state.current_path.size();
+    boost::dynamic_bitset<> bit_vector = problem_state.history_key.first; 
+    int last_node = problem_state.history_key.second;
+    int cost = problem_state.current_cost;
+
+    if (depth >= instance_size_global)
+        return {
+            .available = true
+        };
+
+    /* Check prefix match */
+    if (last_node == lkh_last_node_by_depth[depth] && bit_vector == lkh_path_by_depth[depth])
+        return {
+            .available = true,
+            .matched_prefix = true,
+            .match_cost = lkh_cost_by_depth[depth],
+        };
+
+    /* Check all subpath matches */
+    for (int i = 0; i < lkh_subpaths_by_depth[depth].size(); i++) {
+        if (
+            last_node == lkh_subpath_end_nodes_by_depth[depth][i].second &&
+            bit_vector == lkh_subpaths_by_depth[depth][i]
+        )
+            return {
+                .available = true,
+                .matched_subpath = true,
+                .match_cost = lkh_subpath_cost_by_depth[depth][i],
+            };
+    }
+
+    return {
+        .available = true
+    };
+}
+
+void log_node(int thread, sop_state& problem_state, MatchInfo& match_info, NodeAction action) {
+    if (!match_info.available) {
         static bool printed = false;
-        if (lkh_entry_processed && !printed) {
+        if (!lkh_processed_by_depth && lkh_entry_processed && !printed) {
             cout << "!! lkh depth table not set up" << endl;
             printed = true; // avoids printing error message repeatedly
         }
         nodes_before_lkh_processed[thread]++;
         no_match_actions[thread][action]++;
+        return;
+    }
+
+    int depth = problem_state.current_path.size();
+    if (match_info.matched_prefix) {
+        if (problem_state.current_cost <= match_info.match_cost) {
+            int pn = nodes_before_match_by_depth[depth]++;
+            cout << "BB matched LKH's best prefix cost for depth " << depth << " at time " << main_timer.get_time_seconds() << " previous nodes " << pn << " action: " << node_action_names[action] << endl;
+        } else {
+            if ((nodes_before_match_by_depth[depth]++) == 0) {
+                cout << "BB first match with LKH's best prefix for depth " << depth << " at time " << main_timer.get_time_seconds() << " action: " << node_action_names[action] << endl;
+            }
+        }
+        match_actions[thread][action]++;
+    } else if (match_info.matched_subpath) {
+        if (problem_state.current_cost <= match_info.match_cost) {
+            cout << "BB matched LKH's subpath cost at depth " << depth << " at time " << main_timer.get_time_seconds() << " action: " << node_action_names[action] << endl;
+        }
+        subpath_match_actions[thread][action]++;
+    } else {
+        no_match_actions[thread][action]++;
     }
 }
-void trace_match_check(Trace& trace, sop_state *problem_state) {
+
+void trace_match_check(Trace& trace, sop_state& problem_state, MatchInfo& match_info) {
     #ifndef DISABLE_TRACE
     if (!trace.is_open()) return;
-    if (!lkh_processed_by_depth) {
-        trace.write(2, 1);
+    if (!match_info.available) {
+        trace.write(MATCH_NOT_AVAILABLE, 1);
         return;
     }
-    if (problem_state->current_path.size() == (size_t)instance_size_global) {
-        trace.write(0, 1);
-        return;
-    }
-    int depth = problem_state->current_path.size();
-    if (problem_state->history_key.second == lkh_last_node_by_depth[depth] && problem_state->history_key.first == lkh_path_by_depth[depth]) {
-        trace.write(1, 1);
-        trace.write(lkh_cost_by_depth[depth], 4);
+
+    int depth = problem_state.current_path.size();
+    if (match_info.matched_prefix) {
+        trace.write(MATCH_PREFIX, 1);
+        trace.write(match_info.match_cost, 4);
+    } else if (match_info.matched_subpath) {
+        trace.write(MATCH_SUBPATH, 1);
+        trace.write(match_info.match_cost, 4);
     } else {
-        trace.write(0, 1);
+        trace.write(MATCH_NOT_FOUND, 1);
     }
     #endif
 }
+
 void trace_initial_state(Trace& trace, sop_state *problem_state) {
     #ifndef DISABLE_TRACE
     if (!trace.is_open()) return;
@@ -1432,15 +1477,17 @@ void solver::enumerate()
                 HistoryNode *his_node = NULL;
                 // Active_Node* active_node = NULL;
 
+                MatchInfo match_info = check_match(problem_state);
+
                 trace.write(problem_state.current_cost, 4);
                 trace.write(best_cost, 4);
-                trace_match_check(trace, &problem_state);
+                trace_match_check(trace, problem_state, match_info);
 
                 if (problem_state.current_cost >= best_cost)
                 { // backtracking
                     trace.write(TRACE_PRUNE_COST, 1);
                     pruned_count++;
-                    log_node(thread_id, &problem_state, PRUNE_BEST_COST);
+                    log_node(thread_id, problem_state, match_info, PRUNE_BEST_COST);
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
@@ -1552,7 +1599,7 @@ void solver::enumerate()
                     // tracking the pruning at current depth
                     // history_table_pruning_success[problem_state.current_path.size()]++;
                     pruned_count++;
-                    log_node(thread_id, &problem_state, PRUNE_HISTORY);
+                    log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
@@ -1568,13 +1615,13 @@ void solver::enumerate()
                             his_node->explored = true;
                     }
                     pruned_count++;
-                    log_node(thread_id, &problem_state, PRUNE_LOWER_BOUND);
+                    log_node(thread_id, problem_state, match_info, PRUNE_LOWER_BOUND);
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
-                log_node(thread_id, &problem_state, NOT_PRUNED);
+                log_node(thread_id, problem_state, match_info, NOT_PRUNED);
                 path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
                 ready_list.push_back(temp);
                 problem_state.current_path.pop_back();

@@ -24,6 +24,13 @@ enum TraceCode {
     TRACE_ENUMERATE // recursively call enumerate from this node
 };
 
+enum TraceMatchCode {
+    MATCH_NOT_FOUND, // didn't match prefix or subpath
+    MATCH_PREFIX, // matched lkh prefix
+    MATCH_NOT_AVAILABLE, // lkh solution not processed
+    MATCH_SUBPATH // matched lkh subpath
+};
+
 /**
  * @brief Code representing the end of a list of items in a trace.
  */

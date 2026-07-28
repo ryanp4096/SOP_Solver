@@ -25,12 +25,19 @@ enum TraceCode {
     TRACE_ENUMERATE // recursively call enumerate from this node
 };
 
+enum TraceMatchCode {
+    MATCH_NOT_FOUND, // didn't match prefix or subpath
+    MATCH_PREFIX, // matched lkh prefix
+    MATCH_NOT_AVAILABLE, // lkh solution not processed
+    MATCH_SUBPATH // matched lkh subpath
+};
+
 struct NodeCheck {
     int node;
     int depth;
     int path_cost;
     int best_cost;
-    bool lkh_match;
+    TraceMatchCode lkh_match_type;
     int lkh_match_cost = -1;
     TraceCode action;
     bool history_match;
