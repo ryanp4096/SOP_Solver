@@ -8,6 +8,10 @@ extern "C"
 #define TABLE_SIZE 541065431 // number of buckets in the history table
 std::atomic<bool> isProcessingBestTour(false);
 
+static bool trace_enabled = false;
+static string trace_path;
+static string trace_path_ext;
+
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
 static string filename;      // name of the sop input file
@@ -39,6 +43,7 @@ static bool enable_heuristic = false; // heuristic to treat multiple history tab
 // static bool enable_progress_estimation = false;
 static bool enable_process_lkh_best_tour = true;
 static bool enable_reuse_lkh_thread = true;
+static bool enable_finish_lkh_before_bb = false;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -142,7 +147,7 @@ int best_cost_temp = INT_MAX; // Temporary variable to store best cost at the ti
 int *lkh_best_tour = NULL;
 float last_updated_time_by_LKH = 0;
 int lkh_end_time = 100; // updated with the config file value
-int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
+// int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
 
 // bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
@@ -190,20 +195,41 @@ bool global_pool_sort(const path_node &src, const path_node &dest) { return src.
 // sort by decreasing lower bound (back is the best)
 bool local_pool_sort(const path_node &src, const path_node &dest) { return src.lower_bound > dest.lower_bound; }
 
+static double gp_const;     // store the total work in the global pool initially
+static double gp_remaining; // variable to store the number of remaining work from global pool
+bool stop_lkh_flag = false;
+bool lkh_entry_processed = false;
+std::atomic<bool> is_first_lkh_thread_use{true};
+void lkh()
+{
+    while (!BB_Complete && !stop_lkh_flag)
+    {
+        LKH(&filename[0], initial_LKHRun);
+        if (initial_LKHRun)
+        {
+            initial_LKHRun = false;
+        }
+        BB_SolFound = false;
+    }
+    return;
+}
+
 enum NodeAction {PRUNE_BEST_COST, PRUNE_HISTORY, PRUNE_LOWER_BOUND, NOT_PRUNED};
+string node_action_names[] = {"PRUNE_BEST_COST", "PRUNE_HISTORY", "PRUNE_LOWER_BOUND", "NOT PRUNED"};
 static vector<vector<unsigned long long>> match_actions;
 static vector<vector<unsigned long long>> subpath_match_actions;
 static vector<vector<unsigned long long>> no_match_actions;
+static vector<int> nodes_before_lkh_processed;
 void log_node(int thread, sop_state *problem_state, NodeAction action) {
     if (lkh_processed_by_depth) {
         int depth = problem_state->current_path.size();
         if (problem_state->history_key.second == lkh_last_node_by_depth[depth] && problem_state->history_key.first == lkh_path_by_depth[depth]) {
             if (problem_state->current_cost <= lkh_cost_by_depth[depth]) {
                 int pn = nodes_before_match_by_depth[depth]++;
-                cout << "BB matched LKH's best prefix cost for depth " << depth << " at time " << main_timer.get_time_seconds() << " previous nodes " << pn << endl;
+                cout << "BB matched LKH's best prefix cost for depth " << depth << " at time " << main_timer.get_time_seconds() << " previous nodes " << pn << " action: " << node_action_names[action] << endl;
             } else {
                 if ((nodes_before_match_by_depth[depth]++) == 0) {
-                    cout << "BB first match with LKH's best prefix for depth " << depth << " at time " << main_timer.get_time_seconds() << endl;
+                    cout << "BB first match with LKH's best prefix for depth " << depth << " at time " << main_timer.get_time_seconds() << " action: " << node_action_names[action] << endl;
                 }
             }
             match_actions[thread][action]++;
@@ -225,31 +251,42 @@ void log_node(int thread, sop_state *problem_state, NodeAction action) {
         }
     } else {
         static bool printed = false;
-        if (!printed) {
+        if (lkh_entry_processed && !printed) {
             cout << "!! lkh depth table not set up" << endl;
             printed = true; // avoids printing error message repeatedly
         }
+        nodes_before_lkh_processed[thread]++;
         no_match_actions[thread][action]++;
     }
 }
-
-static double gp_const;     // store the total work in the global pool initially
-static double gp_remaining; // variable to store the number of remaining work from global pool
-bool stop_lkh_flag = false;
-bool lkh_entry_processed = false;
-std::atomic<bool> is_first_lkh_thread_use{true};
-void lkh()
-{
-    while (!BB_Complete && !stop_lkh_flag)
-    {
-        LKH(&filename[0], initial_LKHRun);
-        if (initial_LKHRun)
-        {
-            initial_LKHRun = false;
-        }
-        BB_SolFound = false;
+void trace_match_check(Trace& trace, sop_state *problem_state) {
+    #ifndef DISABLE_TRACE
+    if (!trace.is_open()) return;
+    if (!lkh_processed_by_depth) {
+        trace.write(2, 1);
+        return;
     }
-    return;
+    if (problem_state->current_path.size() == (size_t)instance_size_global) {
+        trace.write(0, 1);
+        return;
+    }
+    int depth = problem_state->current_path.size();
+    if (problem_state->history_key.second == lkh_last_node_by_depth[depth] && problem_state->history_key.first == lkh_path_by_depth[depth]) {
+        trace.write(1, 1);
+        trace.write(lkh_cost_by_depth[depth], 4);
+    } else {
+        trace.write(0, 1);
+    }
+    #endif
+}
+void trace_initial_state(Trace& trace, sop_state *problem_state) {
+    #ifndef DISABLE_TRACE
+    if (!trace.is_open()) return;
+    for (int i = 0; i < problem_state->current_path.size(); i++) {
+        trace.write(problem_state->current_path.at(i), 2);
+    }
+    trace.write(TRACE_END_LIST, 2);
+    #endif
 }
 
 void print_diagnostics()
@@ -278,56 +315,61 @@ void print_diagnostics()
 /* ---------------------       END        -------------------------*/
 /* --------------------- Static Functions -------------------------*/
 
-void solver::assign_parameter(vector<string> setting)
+void solver::enable_trace(string path)
 {
-    t_limit = atoi(setting[0].c_str());
+    #ifndef DISABLE_TRACE
+    trace_enabled = true;
+    size_t ext_index = path.find_last_of('.');
+    if (ext_index == string::npos || path.length() - ext_index > 5) {
+        trace_path = path;
+    } else {
+        trace_path = path.substr(0, ext_index);
+        trace_path_ext = path.substr(ext_index);
+    }
+    #else
+    cout << "[Trace] Must compile with `make ENABLE_TRACE=1` to use trace" << endl;
+    #endif
+}
+
+void solver::assign_parameter(Config config)
+{
+    t_limit = config.time_limit;
     std::cout << "Time limit = " << t_limit << std::endl;
 
-    global_pool_size = atoi(setting[1].c_str());
+    global_pool_size = config.global_pool_size;
     std::cout << "GPQ size = " << global_pool_size << std::endl;
 
-    inhis_mem_limit = atof(setting[3].c_str());
+    inhis_mem_limit = config.memory_percent;
     std::cout << "History table mem limit = " << inhis_mem_limit << std::endl;
 
-    // inhis_depth = atof(setting[4].c_str());
+    // inhis_depth = config.history_depth;
     // std::cout << "History table depth to always add = " << inhis_depth << std::endl;
 
-    // exploitation_per = atof(setting[5].c_str())/float(100);
+    // exploitation_per = config.exploitation_percent / 100.0;
     // std::cout << "Restart exploitation/exploration ratio is " << exploitation_per << std::endl;
-    // group_sample_time = atoi(setting[6].c_str());
+    // group_sample_time = config.group_sample_time;
     // std::cout << "Group sample time = " << group_sample_time << std::endl;
-    // tgroup_ratio = atoi(setting[7].c_str());
+    // tgroup_ratio = config.group_thread_count;
     // std::cout << "Number of promising thread per exploitation group = " << tgroup_ratio << std::endl;
 
-    if (!atoi(setting[8].c_str()))
-        enable_workstealing = false;
-    else
-        enable_workstealing = true;
+    enable_workstealing = config.enable_work_stealing;
+    enable_threadstop = config.enable_thread_stopping;
+    enable_lkh = config.enable_lkh;
+    // enable_progress_estimation = config.enable_progress_estimation;
 
-    if (!atoi(setting[9].c_str()))
-        enable_threadstop = false;
-    else
-        enable_threadstop = true;
-
-    if (!atoi(setting[10].c_str()))
-        enable_lkh = false;
-    else
-        enable_lkh = true;
-
-    lkh_end_time = atoi(setting[15].c_str());
+    lkh_end_time = config.end_lkh_time;
     if (lkh_end_time < 0) {
         lkh_end_time = INT_MAX;
     }
     std::cout << "LKH end time after inactivity = " << lkh_end_time
                 << " seconds" << std::endl;
 
-    lkh_stable_entry_duration = atoi(setting[16].c_str());
-    // if (!atoi(setting[11].c_str())) enable_progress_estimation = false;
-    // else enable_progress_estimation = true;
-    number_of_groups = atoi(setting[12].c_str());
+    // lkh_stable_entry_duration = config.stable_lkh_entry_duration;
+    // enable_progress_estimation = config.enable_progress_estimation;
+    number_of_groups = config.number_of_buckets;
     std::cout << "Number of groups = " << number_of_groups << std::endl;
 
-    bucket_size = atoi(setting[13].c_str());
+    bucket_size = config.bucket_size;
     if (bucket_size > 0)
         std::cout << "Group size in config = " << bucket_size << std::endl;
 
@@ -340,14 +382,15 @@ void solver::assign_parameter(vector<string> setting)
     }
     std::cout << "Blocking mem limit = " << mem_limit << std::endl;
 
-    enable_heuristic = (setting[14] == "1");
+    enable_heuristic = config.enable_heuristic;
     if (enable_heuristic)
         std::cout << "Heuristic to treat multiple history table as one single history table is enabled" << std::endl;
     else
         std::cout << "Heuristic to treat multiple history table as one single history table is disabled" << std::endl;
     
-    enable_process_lkh_best_tour = atoi(setting[17].c_str());
-    enable_reuse_lkh_thread = atoi(setting[18].c_str());
+    enable_process_lkh_best_tour = config.process_lkh_best_tour;
+    enable_reuse_lkh_thread = config.reuse_lkh_thread;
+    enable_finish_lkh_before_bb = config.finish_lkh_before_bb;
 
     return;
 }
@@ -532,7 +575,7 @@ void solver::solve(string f_name, int thread_num)
     if (enable_lkh)
         if (LKH_thread.joinable())
             LKH_thread.join();
-
+    
     // DIAGNOSTIC : Enumerated Nodes
     unsigned long long enumerated_nodes_sum = 0;
     unsigned long long pruned_nodes_sum = 0;
@@ -553,7 +596,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
     std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
     for (int d = 0; d < instance_size + 1; d++) {
-        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << nodes_before_match_by_depth[d] << endl;
+        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << (lkh_processed_by_depth ? nodes_before_match_by_depth[d].load() : 0) << endl;
     }
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
@@ -580,6 +623,10 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "[No Match] Pruned by history:         " << no_match_actions_sum[PRUNE_HISTORY] << endl;
     std::cout << "[No Match] Pruned by lower bound:     " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
 
+    int nodes_before_lkh_processed_sum = 0;
+    for (int i = 0; i < nodes_before_lkh_processed.size(); i++)
+        nodes_before_lkh_processed_sum += nodes_before_lkh_processed[i];
+    std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -619,6 +666,10 @@ void solver::solve(string f_name, int thread_num)
         std::cout << steal_times[i] << endl;
     }
     print_workdone();
+
+    cout << "[Memory] Maximum memory used: " << getPeakMemoryUsage() / 1048576 << " MB" << endl;
+
+    // cout << "[Memory] Memory Info Lookups: " << getMemoryLookupCount() << endl;
     // to count the number of entries at different level in history table and their references
     // history_table.track_entries_and_references();
 
@@ -923,6 +974,7 @@ void solver::solve_parallel()
         no_match_actions[i] = vector<unsigned long long>(4);
         subpath_match_actions[i] = vector<unsigned long long>(4);
     }
+    nodes_before_lkh_processed = vector<int>(thread_cnt + 1);
 
     float current_time = main_timer.get_time_seconds();
     for (int i = 0; i < thread_cnt + 1; ++i)
@@ -937,7 +989,7 @@ void solver::solve_parallel()
     for (int i = 0; i < thread_total; ++i)
     {
         std::cout << "Starting thread " << i << "\n";
-        Thread_manager[i] = thread(&solver::enumerate, move(solvers[i]));
+        Thread_manager[i] = thread(&solver::start_thread, move(solvers[i]));
         active_threads++;
     }
 
@@ -970,6 +1022,7 @@ void solver::solve_parallel()
         if (Thread_manager[i].joinable())
         {
             Thread_manager[i].join();
+            solvers[i].trace.close();
             std::cout << "Thread " << i << " joined\n";
         }
     }
@@ -1060,8 +1113,18 @@ void solver::processBestTour()
         pthread_mutex_unlock(&Sol_lock);
         // Now print the copied tour
 
+        cout << "LKH Best Tour: ";
+        for (int i = 0; i <= instance_size; i++)
+            cout << localBestTour[i] << " ";
+        cout << endl;
+
         // Ensure the tour starts from node 1
         rotateTourToStartFromNode1(localBestTour, instance_size);
+
+        cout << "Rotated Tour: ";
+        for (int i = 0; i <= instance_size; i++)
+            cout << localBestTour[i] << " ";
+        cout << endl;
 
         int safety_cost_check_total = 0;
         // Compute total cost using prefix sum
@@ -1071,6 +1134,11 @@ void solver::processBestTour()
             int src = localBestTour[i] - 1;
             int dst = localBestTour[(i + 1)] - 1;
             // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
+            if (cost_graph[src][dst].weight < 0) {
+                cout << "best tour index " << i << " had negative cost between node " << src << " and " << dst << endl;
+                isProcessingBestTour.store(false);
+                return;
+            }
             safety_cost_check_total += cost_graph[src][dst].weight;
         }
         std::cout << "Best Tour with cost: " << safety_cost_check_total << std::endl;
@@ -1228,13 +1296,33 @@ void solver::processBestTour()
     }
 }
 
+void solver::start_thread()
+{
+    if (trace_enabled) {
+        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread)) {
+            trace.open(trace_path + trace_path_ext);
+        } else {
+            trace.open(trace_path + to_string(thread_id) + trace_path_ext);
+        }
+        trace.write(TRACE_VERSION_NUMBER, 4);
+        trace.write(thread_id, 1);
+        trace_initial_state(trace, &problem_state);
+    }
+    enumerate();
+}
+
 void solver::enumerate()
 {
     // wait for lkh to finish before enumerating. for debug only
-    if (!lkh_entry_processed)
+    if (enable_finish_lkh_before_bb && !lkh_entry_processed)
     {
         while (!lkh_entry_processed)
         {
+            if (thread_id == 0 && best_cost_temp != INT_MAX && best_cost_temp == best_cost && last_updated_time_by_LKH == 0)
+            {
+                last_updated_time_by_LKH = main_timer.get_time_seconds();
+                std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
+            }
             if (thread_id == 0 && !stop_lkh_flag && (main_timer.get_time_seconds() > lkh_end_time))
             {
                 cout << "Stopping LKH as time limit reached at time " << main_timer.get_time_seconds() << endl;
@@ -1262,22 +1350,22 @@ void solver::enumerate()
             // last updated best cost is not by LKH or LKH has not updated anything yet
             if (last_updated_time_by_LKH == 0)
             {
-                last_updated_time_by_LKH = lkh_timer.get_time_seconds();
+                last_updated_time_by_LKH = main_timer.get_time_seconds();
                 std::cout << "setting last updated at " << last_updated_time_by_LKH << endl;
             }
             else
             {  
             // TEMP to make sure the LKH thread is th ethread that is processing it, 
             // it makes sure that LKH has written down the best tour in LKH_best_tour shared variable, so we'll not have error when trying to read from it, better solution in future
-                if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
-                {
-                    if (enable_process_lkh_best_tour) {
-                        cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
+                // if (main_timer.get_time_seconds() > lkh_end_time && thread_id == thread_total)
+                // {
+                //     if (enable_process_lkh_best_tour) {
+                //         cout << "Processing LKH at time " << main_timer.get_time_seconds() << endl;
 
-                        processBestTour();
-                    }
-                    lkh_entry_processed = true;
-                }
+                //         processBestTour();
+                //     }
+                //     lkh_entry_processed = true;
+                // }
             }
             
         }
@@ -1299,6 +1387,7 @@ void solver::enumerate()
             if (!problem_state.depCnt[taken_node] && !problem_state.taken_arr[taken_node])
             { // only consider nodes that haven't already been taken, and who have no remaining dependencies
                 ready_node_count++;
+                trace.write(taken_node, 2);
 
                 // triming
                 int source_node = problem_state.current_path.back();
@@ -1314,8 +1403,13 @@ void solver::enumerate()
                 HistoryNode *his_node = NULL;
                 // Active_Node* active_node = NULL;
 
+                trace.write(problem_state.current_cost, 4);
+                trace.write(best_cost, 4);
+                trace_match_check(trace, &problem_state);
+
                 if (problem_state.current_cost >= best_cost)
                 { // backtracking
+                    trace.write(TRACE_PRUNE_COST, 1);
                     pruned_count++;
                     log_node(thread_id, &problem_state, PRUNE_BEST_COST);
                     prune(source_node, taken_node, edge_weight);
@@ -1324,6 +1418,7 @@ void solver::enumerate()
 
                 if (problem_state.current_path.size() == (size_t)instance_size)
                 { // if you've reached a leaf node (complete solution)
+                    trace.write(TRACE_PRUNE_LEAF, 1);
                     if (problem_state.current_cost < best_cost)
                     {
                         best_solution_lock.lock();
@@ -1369,6 +1464,8 @@ void solver::enumerate()
                 if (!taken)
                 { // if there is no similar entry in the history table
                     lower_bound = dynamic_hungarian(source_node, taken_node);
+                    trace.write(TRACE_HISTORY_NO_MATCH, 1);
+                    trace.write(lower_bound, 4);
 
                     // TODO_VIKAS: can we check the lower bound with the best cost before inserting into the history table
 
@@ -1433,6 +1530,7 @@ void solver::enumerate()
 
                 if (lower_bound >= best_cost)
                 {
+                    trace.write(TRACE_PRUNE_LB, 1);
                     if (his_node != NULL)
                     {
                         HistoryContent content = his_node->entry.load();
@@ -1445,6 +1543,7 @@ void solver::enumerate()
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
+                trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, &problem_state, NOT_PRUNED);
                 path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
@@ -1455,6 +1554,7 @@ void solver::enumerate()
                 problem_state.history_key.second = source_node;
             }
         }
+        trace.write(TRACE_END_LIST, 2);
 
         // PROGRESS
         // COMMENT:ready_node_count : number of nodes in the ready list
@@ -1485,6 +1585,7 @@ void solver::enumerate()
         path_node active_node;
         while (local_pools->pop_from_active_list(thread_id, active_node))
         {
+            trace.write(active_node.sequence.back(), 2);
             if (enable_threadstop)
             {
                 // COMMENT: we are comparing the active_node(thread_id, last_node) with the request_buffer(thread_id, request_buffer)
@@ -1492,6 +1593,8 @@ void solver::enumerate()
                 bool prefix_key_matched = false;
                 if (check_stop_request(active_node.history_key, active_node.sequence, &prefix_key_matched))
                 {
+                    trace.write(TRACE_CANCEL_THREAD_STOP, 1);
+                    trace.write(static_cast<int>(prefix_key_matched), 1);
                     work_remaining[thread_id] -= active_node.current_node_value;
                     if (prefix_key_matched)
                         break;
@@ -1524,6 +1627,7 @@ void solver::enumerate()
             problem_state.enumeration_depth++;
             problem_state.work_above = active_node.current_node_value;
 
+            trace.write(TRACE_ENUMERATE, 1);
             enumerate();
 
             /* Untake */
@@ -1551,6 +1655,7 @@ void solver::enumerate()
                 }
             }
         }
+        trace.write(TRACE_END_LIST, 2);
         while (local_pools->pop_from_active_list(thread_id, active_node))
         {
             work_remaining[thread_id] -= active_node.current_node_value;
@@ -1946,6 +2051,9 @@ bool solver::enumeration_pre_check(path_node &active_node)
         //                       && active_node.his_entry->Entry.load().prefix_cost < active_node.partial_cost) //TODO: thread stopping
     )
     {
+        trace.write(TRACE_CANCEL_PRECHECK, 1);
+        trace.write(active_node.lower_bound, 4);
+        trace.write(best_cost, 4);
         // if (enable_progress_estimation) //pruning due to enumeration-time backtracking
         //     estimated_trimmed_percent[thread_id] += active_node.current_node_value; //add the value of this node you are trimming
         // PROGRESS
@@ -2001,7 +2109,13 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
     {
         // we already the have best suffix and same cost so no need to proceed
         if (cost >= content.prefix_cost)
+        {
+            trace.write(TRACE_HISTORY_PRUNE_COST, 1);
+            trace.write(content.lower_bound, 4);
+            trace.write(content.prefix_cost, 4);
+            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
+        }
     }
     else
     {
@@ -2011,7 +2125,13 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
         // std::cout << "   Depth " << key.first.count() << "   Time " << main_timer.get_time_seconds() << endl;
         // we don't have the best suffix, so if the costs are equal, we need to explore that path
         if (cost > content.prefix_cost)
+        {
+            trace.write(TRACE_HISTORY_PRUNE_COST, 1);
+            trace.write(content.lower_bound, 4);
+            trace.write(content.prefix_cost, 4);
+            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
+        }
         // we are updating the lower bound when the cost is better or same
         // we have to do this, since we don't have the best suffix lower bound (i.e., its coming from LKH)
         // from here, we have to consider this updated lowerbound
@@ -2041,7 +2161,19 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
     if (history_node->is_best_suffix)
     {
         if (imp <= content.lower_bound - best_cost)
+        {
+            trace.write(TRACE_HISTORY_PRUNE_LB, 1);
+            trace.write(content.lower_bound, 4);
+            trace.write(content.prefix_cost, 4);
+            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
+        } else
+        {
+            trace.write(TRACE_HISTORY_NO_PRUNE, 1);
+            trace.write(content.lower_bound, 4);
+            trace.write(content.prefix_cost, 4);
+            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+        }
         history_node->entry.store({cost, content.lower_bound - imp});
         *lowerbound = content.lower_bound - imp;
         *entry = history_node;
@@ -2052,6 +2184,11 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
          * since we don't have the best suffix lower bound, we will not consider any improvement logic here
          * whenever, we are updating the lower bound from B&B, we will set is_best_suffix to true
          */
+        trace.write(TRACE_HISTORY_NO_PRUNE, 1);
+        trace.write(*lowerbound, 4);
+        trace.write(content.prefix_cost, 4);
+        trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+
         numberOfTimesBestSuffixEntryUpdated++;
         if (cost < content.prefix_cost) {
             numberOfTimesBetterThanLKH++;
@@ -2136,6 +2273,8 @@ bool solver::workload_request()
             } // updating the variable to track how many of the threads completed the work assigned to them from the primary subspace
             gp_remaining = global_pool.size();
             global_pool_lock.unlock();
+
+            trace_initial_state(trace, &problem_state);
             return true;
         }
         global_pool_lock.unlock();
@@ -2176,6 +2315,7 @@ bool solver::workload_request()
                 // steal_times_lock.lock();
                 // steal_times.push_back(main_timer.get_time_seconds());
                 // steal_times_lock.unlock();
+                trace_initial_state(trace, &problem_state);
                 return true;
             }
             stolen_from = stolen_from | (1 << target);

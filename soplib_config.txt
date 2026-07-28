@@ -54,3 +54,6 @@ PROCESS_LKH_BEST_TOUR = 1
 
 // Reuse lkh thread to run branch and bound after lkh end time reached (1 for enable 0 for disable)
 REUSE_LKH_THREAD = 1
+
+// Finish lkh before starting branch and bound, instead of running in parallel (for debugging) (1 for enable 0 for disable)
+FINISH_LKH_BEFORE_BB = 0

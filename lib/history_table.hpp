@@ -2,8 +2,9 @@
 #define HASH_H
 
 #include <iostream>
+#include <list>
 
-#include <sys/sysinfo.h>
+#include "memory.hpp"
 
 // #include <boost/smart_ptr/detail/spinlock.hpp>
 #include <boost/dynamic_bitset.hpp>

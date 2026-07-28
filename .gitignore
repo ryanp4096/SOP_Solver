@@ -1,6 +1,8 @@
 # Do not track object files or executables
 sop_solver
+sop_trace
 *.o
 
 *.log
 *.callgrind
+*.bin

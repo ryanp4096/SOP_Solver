@@ -1,6 +1,7 @@
 #ifndef SOLVER_H
 #define SOLVER_H
 
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -31,6 +32,9 @@
 #include "local_pool.hpp"
 #include "graph.hpp"
 #include "hungarian.hpp"
+#include "trace.hpp"
+#include "config.hpp"
+#include "memory.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -122,6 +126,9 @@ private:
     //  int last_node = -1;
     //  bool stop_init = false; //INVESTIGATE; might be whether this thread has ever been stopped before
 
+    // Trace File
+    Trace trace;
+
     /* Build graph based on .sop input file specified in filename. */
     void retrieve_input();
     /* Transforms dependency and Hungarian graphs, adding redundant edges from grandparents, great grandparents, etc., and initializes in_degree. */
@@ -144,6 +151,8 @@ private:
 
     /* To process the best tour path provided by LKH */
     void processBestTour();
+    /* Starts enumeration */
+    void start_thread();
     /* Recursive function that each thread runs to process its assigned spaces of the enumeration tree, checking one node and then its children and their children, etc. */
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.
@@ -201,7 +210,9 @@ private:
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(vector<string> setting);
+    void assign_parameter(Config config);
+    /* Enable writing a trace file of the algorithm to the given path. */
+    void enable_trace(string path);
     /* Primary function that initializes and begins the solver. */
     void solve(string f_name, int thread_num);
 };
