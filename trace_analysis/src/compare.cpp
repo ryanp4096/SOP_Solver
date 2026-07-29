@@ -4,18 +4,30 @@ TraceCompare::TraceCompare(const std::string& path1, const std::string& path2)
     : path1(path1), path2(path2), r1(path1), r2(path2) {}
 
 void TraceCompare::print_results() {
+    std::cout << std::endl;
+
     std::cout << "r1 enumerated nodes: " << r1.enumerated_nodes << std::endl;
     std::cout << "r1 ready nodes: " << r1.ready_nodes << std::endl;
     std::cout << "r1 recursive nodes: " << r1.recursive_nodes << std::endl;
+
+    std::cout << std::endl;
 
     std::cout << "r2 enumerated nodes: " << r2.enumerated_nodes << std::endl;
     std::cout << "r2 ready nodes: " << r2.ready_nodes << std::endl;
     std::cout << "r2 recursive nodes: " << r2.recursive_nodes << std::endl;
 
-    std::cout << "r1 only times: " << r1_only_times << std::endl;
-    std::cout << "r1 only nodes: " << r1_only_nodes << std::endl;
-    std::cout << "r2 only times: " << r2_only_times << std::endl;
-    std::cout << "r2 only nodes: " << r2_only_nodes << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "shared nodes: " << shared_nodes << std::endl;
+    std::cout << "r1 only nodes: " << r1_only_nodes << " (times: " << r1_only_times << ")" << std::endl;
+    std::cout << "r2 only nodes: " << r2_only_nodes << " (times: " << r2_only_times << ")" << std::endl;
+
+    std::cout << std::endl;
+
+    std::cout << "r1 counted enumerated nodes: " << shared_nodes + r1_only_nodes << " (expected: " << r1.enumerated_nodes << ")" << std::endl;
+    std::cout << "r2 counted enumerated nodes: " << shared_nodes + r2_only_nodes << " (expected: " << r2.enumerated_nodes << ")" << std::endl;
+
+    std::cout << std::endl;
 
     for (int i = 0; i < 11; i++) {
         if (r1_only_times_by_type[i] == 0 && r2_only_times_by_type[i] == 0) continue;
@@ -24,6 +36,7 @@ void TraceCompare::print_results() {
         std::cout << "r1 only nodes: " << r1_only_nodes_by_type[i] << std::endl;
         std::cout << "r2 only times: " << r2_only_times_by_type[i] << std::endl;
         std::cout << "r2 only nodes: " << r2_only_nodes_by_type[i] << std::endl;
+        std::cout << std::endl;
     }
 }
 
@@ -69,6 +82,7 @@ void TraceCompare::compare_node() {
             std::cout << "!! different items in check list" << std::endl;
             continue;
         }
+        shared_nodes++;
         if (node1.action != node2.action) {
             // std::cout << "different actions for node " << node1.node << "" << std::endl;
             if (node1.action == TRACE_NO_PRUNE || node2.action == TRACE_NO_PRUNE) {

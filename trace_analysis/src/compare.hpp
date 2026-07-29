@@ -15,6 +15,7 @@ public:
     TraceReader r1;
     TraceReader r2;
 
+    unsigned long long shared_nodes = 0;
     unsigned long long r1_only_times = 0;
     unsigned long long r1_only_nodes = 0;
     unsigned long long r2_only_times = 0;

@@ -57,6 +57,9 @@ struct Config {
     /* Process each subpath of the lkh tour as a separate history table entry */
     bool process_lkh_subpaths = true;
 
+    /* If trace is enabled, set the detail level of the trace */
+    int trace_detail_level = 0;
+
     /* UNUSED */
 
     int assign_workload_level = 150;

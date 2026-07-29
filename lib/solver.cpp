@@ -45,6 +45,7 @@ static bool enable_process_lkh_best_tour = true;
 static bool enable_reuse_lkh_thread = true;
 static bool enable_finish_lkh_before_bb = false;
 static bool enable_process_lkh_subpaths = true;
+static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -308,19 +309,19 @@ void trace_match_check(Trace& trace, sop_state& problem_state, MatchInfo& match_
     #ifndef DISABLE_TRACE
     if (!trace.is_open()) return;
     if (!match_info.available) {
-        trace.write(MATCH_NOT_AVAILABLE, 1);
+        trace.write_detail(MATCH_NOT_AVAILABLE, 1);
         return;
     }
 
     int depth = problem_state.current_path.size();
     if (match_info.matched_prefix) {
-        trace.write(MATCH_PREFIX, 1);
+        trace.write_detail(MATCH_PREFIX, 1);
         trace.write_detail(match_info.match_cost, 4);
     } else if (match_info.matched_subpath) {
-        trace.write(MATCH_SUBPATH, 1);
+        trace.write_detail(MATCH_SUBPATH, 1);
         trace.write_detail(match_info.match_cost, 4);
     } else {
-        trace.write(MATCH_NOT_FOUND, 1);
+        trace.write_detail(MATCH_NOT_FOUND, 1);
     }
     #endif
 }
@@ -438,6 +439,7 @@ void solver::assign_parameter(Config config)
     enable_reuse_lkh_thread = config.reuse_lkh_thread;
     enable_finish_lkh_before_bb = config.finish_lkh_before_bb;
     enable_process_lkh_subpaths = config.process_lkh_subpaths;
+    trace_detail_level = static_cast<TraceDetailLevel>(config.trace_detail_level);
 
     return;
 }
@@ -1379,7 +1381,7 @@ void solver::start_thread()
         else
             path = trace_path + to_string(thread_id) + trace_path_ext;
         
-        trace.open(path, instance_size, DETAIL_NORMAL, thread_id);
+        trace.open(path, instance_size, trace_detail_level, thread_id);
         trace.write_header();
         trace_initial_state(trace, &problem_state);
     }

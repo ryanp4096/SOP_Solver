@@ -142,6 +142,9 @@ void set_key(Config *config, string key, string value) {
 
     else if (key == "process_lkh_subpaths")
         config->process_lkh_subpaths = atoi(cvalue);
+
+    else if (key == "trace_detail_level")
+        config->trace_detail_level = atoi(cvalue);
     
     else {
         cout << "[Config] Unknown key " << key << endl;

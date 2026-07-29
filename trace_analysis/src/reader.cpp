@@ -126,7 +126,7 @@ bool TraceReader::parse_node_check(NodeCheck *node) {
     node->depth = current_path.size() + 1;
     node->path_cost = next_detail(4);
     node->best_cost = next_detail(4);
-    node->lkh_match_type = static_cast<TraceMatchCode>(next(1));
+    node->lkh_match_type = static_cast<TraceMatchCode>(next_detail(1));
     if (node->lkh_match_type == MATCH_PREFIX || node->lkh_match_type == MATCH_SUBPATH) {
         node->lkh_match_cost = next_detail(4);
     }

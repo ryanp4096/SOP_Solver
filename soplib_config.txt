@@ -60,3 +60,6 @@ FINISH_LKH_BEFORE_BB = 0
 
 // Process each subpath of the lkh tour as a separate history table entry (1 for enable 0 for disable)
 PROCESS_LKH_SUBPATHS = 1
+
+// If trace is enabled, set the detail level of the trace (0 = normal, 1 = compact)
+TRACE_DETAIL_LEVEL = 0
