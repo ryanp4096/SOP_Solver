@@ -31,6 +31,11 @@ enum TraceMatchCode {
     MATCH_SUBPATH // matched lkh subpath
 };
 
+enum TraceDetailLevel {
+    DETAIL_NORMAL,
+    DETAIL_COMPACT
+};
+
 /**
  * @brief Code representing the end of a list of items in a trace.
  */
@@ -39,7 +44,7 @@ enum TraceMatchCode {
 /**
  * @brief Version number included in trace file to differentiate between trace formats
  */
-#define TRACE_VERSION_NUMBER 1
+#define TRACE_VERSION_NUMBER 2
 
 /**
  * @brief For writing a binary file representing a trace of the algorithm.
@@ -49,6 +54,11 @@ private:
     bool opened;
     std::string path;
     std::ofstream file;
+    TraceDetailLevel detail_level;
+    int instance_size;
+    int instance_size_shift;
+    int thread_id;
+
 public:
     /**
      * @brief Create empty trace file.
@@ -57,8 +67,16 @@ public:
 
     /**
      * @brief Open trace file.
+     * @param path Path to write to.
+     * @param instance_size Size of the instance.
+     * @param compact_level Controls size of trace and amount of detail in trace.
      */
-    void open(std::string path);
+    void open(std::string path, int instance_size, TraceDetailLevel detail_level, int thread_id);
+
+    /**
+     * @brief Write header info to trace file.
+     */
+    void write_header();
 
     /**
      * @brief Close trace file.
@@ -76,6 +94,24 @@ public:
      * @param bytes The number of bytes to write.
      */
     void write(unsigned long long data, size_t bytes);
+
+    /**
+     * @brief Write data only to appear in detailed trace.
+     * @param data The data to write.
+     * @param bytes The number of bytes to write.
+     */
+    void write_detail(unsigned long long data, size_t bytes);
+
+    /**
+     * @brief Write a node number using custom format.
+     * @param node The node to write.
+     */
+    void write_node(int node);
+
+    /**
+     * @brief Write end list.
+     */
+    void write_end_list();
 };
 
 #endif

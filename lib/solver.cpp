@@ -315,10 +315,10 @@ void trace_match_check(Trace& trace, sop_state& problem_state, MatchInfo& match_
     int depth = problem_state.current_path.size();
     if (match_info.matched_prefix) {
         trace.write(MATCH_PREFIX, 1);
-        trace.write(match_info.match_cost, 4);
+        trace.write_detail(match_info.match_cost, 4);
     } else if (match_info.matched_subpath) {
         trace.write(MATCH_SUBPATH, 1);
-        trace.write(match_info.match_cost, 4);
+        trace.write_detail(match_info.match_cost, 4);
     } else {
         trace.write(MATCH_NOT_FOUND, 1);
     }
@@ -329,9 +329,9 @@ void trace_initial_state(Trace& trace, sop_state *problem_state) {
     #ifndef DISABLE_TRACE
     if (!trace.is_open()) return;
     for (int i = 0; i < problem_state->current_path.size(); i++) {
-        trace.write(problem_state->current_path.at(i), 2);
+        trace.write_node(problem_state->current_path.at(i));
     }
-    trace.write(TRACE_END_LIST, 2);
+    trace.write_end_list();
     #endif
 }
 
@@ -1373,13 +1373,14 @@ void solver::processBestTour()
 void solver::start_thread()
 {
     if (trace_enabled) {
-        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread)) {
-            trace.open(trace_path + trace_path_ext);
-        } else {
-            trace.open(trace_path + to_string(thread_id) + trace_path_ext);
-        }
-        trace.write(TRACE_VERSION_NUMBER, 4);
-        trace.write(thread_id, 1);
+        string path;
+        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
+            path = trace_path + trace_path_ext;
+        else
+            path = trace_path + to_string(thread_id) + trace_path_ext;
+        
+        trace.open(path, instance_size, DETAIL_NORMAL, thread_id);
+        trace.write_header();
         trace_initial_state(trace, &problem_state);
     }
     enumerate();
@@ -1461,7 +1462,7 @@ void solver::enumerate()
             if (!problem_state.depCnt[taken_node] && !problem_state.taken_arr[taken_node])
             { // only consider nodes that haven't already been taken, and who have no remaining dependencies
                 ready_node_count++;
-                trace.write(taken_node, 2);
+                trace.write_node(taken_node);
 
                 // triming
                 int source_node = problem_state.current_path.back();
@@ -1479,8 +1480,8 @@ void solver::enumerate()
 
                 MatchInfo match_info = check_match(problem_state);
 
-                trace.write(problem_state.current_cost, 4);
-                trace.write(best_cost, 4);
+                trace.write_detail(problem_state.current_cost, 4);
+                trace.write_detail(best_cost, 4);
                 trace_match_check(trace, problem_state, match_info);
 
                 if (problem_state.current_cost >= best_cost)
@@ -1541,7 +1542,7 @@ void solver::enumerate()
                 { // if there is no similar entry in the history table
                     lower_bound = dynamic_hungarian(source_node, taken_node);
                     trace.write(TRACE_HISTORY_NO_MATCH, 1);
-                    trace.write(lower_bound, 4);
+                    trace.write_detail(lower_bound, 4);
 
                     // TODO_VIKAS: can we check the lower bound with the best cost before inserting into the history table
 
@@ -1630,7 +1631,7 @@ void solver::enumerate()
                 problem_state.history_key.second = source_node;
             }
         }
-        trace.write(TRACE_END_LIST, 2);
+        trace.write_end_list();
 
         // PROGRESS
         // COMMENT:ready_node_count : number of nodes in the ready list
@@ -1661,7 +1662,7 @@ void solver::enumerate()
         path_node active_node;
         while (local_pools->pop_from_active_list(thread_id, active_node))
         {
-            trace.write(active_node.sequence.back(), 2);
+            trace.write_node(active_node.sequence.back());
             if (enable_threadstop)
             {
                 // COMMENT: we are comparing the active_node(thread_id, last_node) with the request_buffer(thread_id, request_buffer)
@@ -1731,7 +1732,7 @@ void solver::enumerate()
                 }
             }
         }
-        trace.write(TRACE_END_LIST, 2);
+        trace.write_end_list();
         while (local_pools->pop_from_active_list(thread_id, active_node))
         {
             work_remaining[thread_id] -= active_node.current_node_value;
@@ -2128,8 +2129,8 @@ bool solver::enumeration_pre_check(path_node &active_node)
     )
     {
         trace.write(TRACE_CANCEL_PRECHECK, 1);
-        trace.write(active_node.lower_bound, 4);
-        trace.write(best_cost, 4);
+        trace.write_detail(active_node.lower_bound, 4);
+        trace.write_detail(best_cost, 4);
         // if (enable_progress_estimation) //pruning due to enumeration-time backtracking
         //     estimated_trimmed_percent[thread_id] += active_node.current_node_value; //add the value of this node you are trimming
         // PROGRESS
@@ -2187,9 +2188,9 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
         if (cost >= content.prefix_cost)
         {
             trace.write(TRACE_HISTORY_PRUNE_COST, 1);
-            trace.write(content.lower_bound, 4);
-            trace.write(content.prefix_cost, 4);
-            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+            trace.write_detail(content.lower_bound, 4);
+            trace.write_detail(content.prefix_cost, 4);
+            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
         }
     }
@@ -2203,9 +2204,9 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
         if (cost > content.prefix_cost)
         {
             trace.write(TRACE_HISTORY_PRUNE_COST, 1);
-            trace.write(content.lower_bound, 4);
-            trace.write(content.prefix_cost, 4);
-            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+            trace.write_detail(content.lower_bound, 4);
+            trace.write_detail(content.prefix_cost, 4);
+            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
         }
         // we are updating the lower bound when the cost is better or same
@@ -2239,16 +2240,16 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
         if (imp <= content.lower_bound - best_cost)
         {
             trace.write(TRACE_HISTORY_PRUNE_LB, 1);
-            trace.write(content.lower_bound, 4);
-            trace.write(content.prefix_cost, 4);
-            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+            trace.write_detail(content.lower_bound, 4);
+            trace.write_detail(content.prefix_cost, 4);
+            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
             return false;
         } else
         {
             trace.write(TRACE_HISTORY_NO_PRUNE, 1);
-            trace.write(content.lower_bound, 4);
-            trace.write(content.prefix_cost, 4);
-            trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+            trace.write_detail(content.lower_bound, 4);
+            trace.write_detail(content.prefix_cost, 4);
+            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
         }
         history_node->entry.store({cost, content.lower_bound - imp});
         *lowerbound = content.lower_bound - imp;
@@ -2261,9 +2262,9 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
          * whenever, we are updating the lower bound from B&B, we will set is_best_suffix to true
          */
         trace.write(TRACE_HISTORY_NO_PRUNE, 1);
-        trace.write(*lowerbound, 4);
-        trace.write(content.prefix_cost, 4);
-        trace.write(static_cast<int>(history_node->is_best_suffix.load()), 1);
+        trace.write_detail(*lowerbound, 4);
+        trace.write_detail(content.prefix_cost, 4);
+        trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
 
         numberOfTimesBestSuffixEntryUpdated++;
         if (cost < content.prefix_cost) {
