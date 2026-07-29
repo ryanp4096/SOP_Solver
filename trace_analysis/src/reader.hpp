@@ -32,6 +32,11 @@ enum TraceMatchCode {
     MATCH_SUBPATH // matched lkh subpath
 };
 
+enum TraceDetailLevel {
+    DETAIL_NORMAL,
+    DETAIL_COMPACT
+};
+
 struct NodeCheck {
     int node;
     int depth;
@@ -63,6 +68,9 @@ public:
     std::vector<int> current_path;
     unsigned long long version_number;
     int thread_id;
+    TraceDetailLevel detail_level;
+    int instance_size_shift;
+    int instance_size;
 
     unsigned long long enumerated_nodes = 0;
     unsigned long long ready_nodes = 0;
@@ -70,6 +78,8 @@ public:
     
     TraceReader(const std::string& path);
     unsigned long long next(size_t bytes);
+    unsigned long long next_detail(size_t bytes);
+    int read_node();
     void read_header();
     void parse();
     void parse_initial_state();
