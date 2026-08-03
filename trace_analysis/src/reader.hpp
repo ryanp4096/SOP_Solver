@@ -25,6 +25,11 @@ enum TraceCode {
     TRACE_ENUMERATE // recursively call enumerate from this node
 };
 
+static std::string TRACE_CODE_NAMES[]{
+    "PRUNE_COST", "PRUNE_LEAF", "HISTORY_NO_MATCH", "HISTORY_PRUNE_COST", "HISTORY_PRUNE_LB",
+    "HISTORY_NO_PRUNE", "HISTORY_PRUNE_LB", "NO_PRUNE", "CANCEL_THREAD_STOP", "CANCEL_PRECHECK", "ENUMERATE"
+};
+
 enum TraceMatchCode {
     MATCH_NOT_FOUND, // didn't match prefix or subpath
     MATCH_PREFIX, // matched lkh prefix

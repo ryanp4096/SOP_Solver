@@ -5,4 +5,9 @@ sop_trace
 
 *.log
 *.callgrind
+
+# for binary files used to store traces
 *.bin
+
+# for yaml files produced by trace analysis representing the difference tree when comparing two traces
+*.trace.yaml
