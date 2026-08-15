@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
+#include "tree.hpp"
 
 #define TRACE_END_LIST UINT16_MAX
 #define MAX_ITERATIONS UINT16_MAX
@@ -42,6 +43,15 @@ enum TraceDetailLevel {
     DETAIL_COMPACT
 };
 
+struct NodeCounts {
+    unsigned long long enumerated_nodes;
+    unsigned long long ready_nodes;
+    unsigned long long recursive_nodes;
+    unsigned int enumerated_children;
+    unsigned int ready_children;
+    unsigned int recursive_children;
+};
+
 struct NodeCheck {
     int node;
     int depth;
@@ -68,6 +78,7 @@ struct NodeCall {
 
 class TraceReader {
 public:
+    TraceTree tree;
     std::string path;
     std::ifstream file;
     std::vector<int> current_path;
@@ -81,16 +92,18 @@ public:
     unsigned long long ready_nodes = 0;
     unsigned long long recursive_nodes = 0;
     
-    TraceReader(const std::string& path);
+    TraceReader(const std::string& path, int tree_depth = 0)
+        : path(path), file(path, std::ios::binary), tree(tree_depth) {}
     unsigned long long next(size_t bytes);
     unsigned long long next_detail(size_t bytes);
     int read_node();
     void read_header();
     void parse();
     void parse_initial_state();
-    unsigned long long parse_node();
+    NodeCounts parse_node();
     bool parse_node_check(NodeCheck *node);
     bool parse_node_call(NodeCall *node);
+    void print_results();
 };
 
 #endif

@@ -1,18 +1,15 @@
+CXX = g++
+CXXFLAGS = -O3
 
-sop_trace: obj/main.o obj/reader.o obj/compare.o
-	g++ -pthread -O3 -o sop_trace $^
+SRC = src/main.cpp src/reader.cpp src/compare.cpp src/tree.cpp
+OBJ = obj/main.o obj/reader.o obj/compare.o obj/tree.o
 
-obj/main.o: src/main.cpp src/main.hpp
-	mkdir -p obj
-	g++ -O3 -c src/main.cpp -o obj/main.o
+sop_trace: $(OBJ)
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
-obj/reader.o: src/reader.cpp src/reader.hpp
-	mkdir -p obj
-	g++ -O3 -c src/reader.cpp -o obj/reader.o
-
-obj/compare.o: src/compare.cpp src/compare.hpp
-	mkdir -p obj
-	g++ -O3 -c src/compare.cpp -o obj/compare.o
+obj/%.o: src/%.cpp
+	@mkdir -p obj
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -rf obj/*.o sop_trace obj

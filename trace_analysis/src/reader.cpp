@@ -1,11 +1,5 @@
 #include "reader.hpp"
 
-TraceReader::TraceReader(const std::string& path)
-    : path(path), file(path, std::ios::binary)
-{
-
-}
-
 unsigned long long TraceReader::next(size_t bytes) {
     switch (bytes) {
         case 1:
@@ -77,7 +71,9 @@ void TraceReader::parse() {
     read_header();
     while (!file.eof()) {
         parse_initial_state();
+        tree.initial_state(current_path);
         parse_node();
+        tree.print_subtree();
         file.peek();
     }
 }
@@ -91,28 +87,48 @@ void TraceReader::parse_initial_state() {
     }
 }
 
-unsigned long long TraceReader::parse_node() {
-    unsigned long long en = 0;
+NodeCounts TraceReader::parse_node() {
+    NodeCounts node_counts{};
+
     recursive_nodes++;
+    node_counts.recursive_nodes++;
+
     for (int i = 0; i < MAX_ITERATIONS; i++) {
         NodeCheck node;
         bool x = parse_node_check(&node);
         if (!x) break;
+
         enumerated_nodes++;
-        en++;
+        node_counts.enumerated_nodes++;
+        node_counts.enumerated_children++;
     }
+
     for (int i = 0; i < MAX_ITERATIONS; i++) {
         NodeCall node;
         bool x = parse_node_call(&node);
         if (!x) break;
+
         ready_nodes++;
+        node_counts.ready_nodes++;
+        node_counts.ready_children++;
+
         if (node.action == TRACE_ENUMERATE) {
             current_path.push_back(node.node);
-            en += parse_node();
+            tree.add_node(node.node);
+
+            NodeCounts child_counts = parse_node();
+            node_counts.recursive_children++;
+            node_counts.enumerated_nodes += child_counts.enumerated_nodes;
+            node_counts.ready_nodes += child_counts.ready_nodes;
+            node_counts.recursive_nodes += child_counts.recursive_nodes;
+
+            tree.finish_node();
             current_path.pop_back();
         }
     }
-    return en;
+
+    tree.edit_node(node_counts.enumerated_nodes, node_counts.recursive_children);
+    return node_counts;
 }
 
 bool TraceReader::parse_node_check(NodeCheck *node) {
@@ -186,4 +202,14 @@ bool TraceReader::parse_node_call(NodeCall *node) {
     node->action = action;
 
     return true;
+}
+
+void TraceReader::print_results() {
+    std::cout << std::endl;
+
+    std::cout << "Results:" << std::endl;
+
+    std::cout << "  Enumerated nodes: " << enumerated_nodes << std::endl;
+    std::cout << "  Ready nodes: " << ready_nodes << std::endl;
+    std::cout << "  Recursive nodes: " << recursive_nodes << std::endl;
 }

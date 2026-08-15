@@ -88,7 +88,7 @@ void TraceCompare::parse() {
             {
                 node_results.clear();
                 for (int i = 0; i < r1.current_path.size(); i++) node_results.push_back({.node = r1.current_path.at(i)});
-                unsigned long long en = r1.parse_node();
+                unsigned long long en = r1.parse_node().enumerated_nodes;
 
                 r1_only_error_times++;
                 r1_only_error_nodes += en;
@@ -101,7 +101,7 @@ void TraceCompare::parse() {
             {
                 node_results.clear();
                 for (int i = 0; i < r2.current_path.size(); i++) node_results.push_back({.node = r2.current_path.at(i)});
-                unsigned long long en = r2.parse_node();
+                unsigned long long en = r2.parse_node().enumerated_nodes;
 
                 r2_only_error_times++;
                 r2_only_error_nodes += en;
@@ -125,7 +125,7 @@ void TraceCompare::parse() {
     while (!r1.file.eof()) {
         node_results.clear();
         for (int i = 0; i < r1.current_path.size(); i++) node_results.push_back({.node = r1.current_path.at(i)});
-        unsigned long long en = r1.parse_node();
+        unsigned long long en = r1.parse_node().enumerated_nodes;
 
         r1_only_error_times++;
         r1_only_error_nodes += en;
@@ -138,7 +138,7 @@ void TraceCompare::parse() {
     while (!r2.file.eof()) {
         node_results.clear();
         for (int i = 0; i < r2.current_path.size(); i++) node_results.push_back({.node = r2.current_path.at(i)});
-        unsigned long long en = r2.parse_node();
+        unsigned long long en = r2.parse_node().enumerated_nodes;
 
         r2_only_error_times++;
         r2_only_error_nodes += en;
@@ -194,7 +194,7 @@ void TraceCompare::compare_node() {
             if (r2_actions[node1.node] != TRACE_NO_PRUNE) {
                 if (node1.action == TRACE_ENUMERATE) {
                     r1.current_path.push_back(node1.node);
-                    unsigned long long en = r1.parse_node();
+                    unsigned long long en = r1.parse_node().enumerated_nodes;
                     r1.current_path.pop_back();
 
                     r1_only_times++;
@@ -221,7 +221,7 @@ void TraceCompare::compare_node() {
             if (r1_actions[node2.node] != TRACE_NO_PRUNE) {
                 if (node2.action == TRACE_ENUMERATE) {
                     r2.current_path.push_back(node2.node);
-                    unsigned long long en = r2.parse_node();
+                    unsigned long long en = r2.parse_node().enumerated_nodes;
                     r2.current_path.pop_back();
 
                     r2_only_times++;
@@ -247,7 +247,7 @@ void TraceCompare::compare_node() {
             /* r2 has ended list. r1 still has items */
             if (node1.action == TRACE_ENUMERATE) {
                 r1.current_path.push_back(node1.node);
-                unsigned long long en = r1.parse_node();
+                unsigned long long en = r1.parse_node().enumerated_nodes;
                 r1.current_path.pop_back();
 
                 r1_only_error_times++;
@@ -274,7 +274,7 @@ void TraceCompare::compare_node() {
             /* r1 has ended list. r2 still has items */
             if (node2.action == TRACE_ENUMERATE) {
                 r2.current_path.push_back(node2.node);
-                unsigned long long en = r2.parse_node();
+                unsigned long long en = r2.parse_node().enumerated_nodes;
                 r2.current_path.pop_back();
 
                 r2_only_error_times++;
@@ -303,7 +303,7 @@ void TraceCompare::compare_node() {
 
             if (node1.action == TRACE_ENUMERATE) {
                 r1.current_path.push_back(node1.node);
-                unsigned long long en = r1.parse_node();
+                unsigned long long en = r1.parse_node().enumerated_nodes;
                 r1.current_path.pop_back();
 
                 r1_only_error_times++;
@@ -327,7 +327,7 @@ void TraceCompare::compare_node() {
 
             if (node2.action == TRACE_ENUMERATE) {
                 r1.current_path.push_back(node1.node);
-                unsigned long long en = r1.parse_node();
+                unsigned long long en = r1.parse_node().enumerated_nodes;
                 r1.current_path.pop_back();
 
                 r1_only_error_times++;
@@ -360,7 +360,7 @@ void TraceCompare::compare_node() {
             } else if (node2.action != TRACE_ENUMERATE) {
                 /* r2 cancelled the node but r1 didn't */
                 r1.current_path.push_back(node1.node);
-                unsigned long long en = r1.parse_node();
+                unsigned long long en = r1.parse_node().enumerated_nodes;
                 r1.current_path.pop_back();
 
                 r1_only_times++;
@@ -378,7 +378,7 @@ void TraceCompare::compare_node() {
             } else if (node1.action != TRACE_ENUMERATE) {
                 /* r1 cancelled the node but r2 didn't */
                 r2.current_path.push_back(node2.node);
-                unsigned long long en = r2.parse_node();
+                unsigned long long en = r2.parse_node().enumerated_nodes;
                 r2.current_path.pop_back();
 
                 r2_only_times++;
