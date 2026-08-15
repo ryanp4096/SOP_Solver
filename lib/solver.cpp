@@ -1128,6 +1128,80 @@ void rotateTourToStartFromNode1(int *tour, int size)
 
     delete[] rotatedTour; // Clean up temporary array
 }
+void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, int expected_shift) {
+    int node_to_order[instance_size_global];
+    for (int i = 0; i < instance_size_global; i++) {
+        node_to_order[tour[i] - 1] = i;
+    }
+    boost::dynamic_bitset<> order_bitset(instance_size_global, false);
+    int highest_index = -1;
+    int last_node = -1;
+    for (int i = 0; i < instance_size_global; i++) {
+        if (key.first[i]) {
+            int order = node_to_order[i];
+            // cout << "N" << i << "/O" << order << " ";
+            if (order > highest_index) {
+                highest_index = order;
+                last_node = i;
+            }
+            order_bitset[order] = true;
+        }
+    }
+    // cout << endl;
+    if (!order_bitset[0]) {
+        cout << "[checkSubpath] !! ERROR: missing first node" << endl;
+        return;
+    }
+    if (last_node != key.second) {
+        cout << "[checkSubpath] !! ERROR: last node does not match - expected " << key.second << ", calculated " << last_node << endl;
+        return;
+    }
+    int stage = 0;
+    int shift = -1;
+    int length = 1;
+    for (int i = 1; i < instance_size_global; i++) {
+        if (stage == 0 && order_bitset[i]) {
+            shift = i - 1;
+            stage = 1;
+        } else if (stage == 1 && !order_bitset[i]) {
+            length = i - shift;
+            stage = 2;
+        } else if (stage == 2 && order_bitset[i]) {
+            cout << "[checkSubpath] !! ERROR: does not match subpath scheme" << endl;
+            return;
+        }
+    }
+    if (stage == 1) {
+        length = instance_size_global - shift;
+    }
+    // cout << "[checkSubpath] Found subpath depth " << length << " shift " << shift << endl;
+    if (length != expected_depth || shift != expected_shift) {
+        cout << "[checkSubpath] !! ERROR: does not match expected depth/shift" << endl;
+        cout << "[checkSubpath]    expected depth: " << expected_depth << " calculated depth: " << length << endl;
+        cout << "[checkSubpath]    expected shift: " << expected_shift << " calculated shift: " << shift << endl;
+        return;
+    }
+
+    int cost_check = 0;
+    int last = -1;
+    for (int i = 0; i < instance_size_global; i++) {
+        if (order_bitset[i]) {
+            int node = tour[i] - 1;
+            if (last != -1) {
+                cost_check += cost_graph[last][node].weight;
+            }
+            last = node;
+        }
+    }
+    if (cost_check != expected_cost) {
+        cout << "[checkSubpath] !! ERROR: does not match expected cost for subpath depth: " << length << " shift: " << shift << endl;
+        cout << "[checkSubpath]    expected cost: " << expected_cost << " calculated cost: " << cost_check << endl;
+        return;
+    }
+
+    cout << "[checkSubpath] Met all standards for subpath depth: " << length << " shift: " << shift << endl;
+}
+
 void solver::processBestTour()
 {
     std::cout << "[processBestTour] Initiating local best tour and Thread ID : " << thread_id << std::endl;
@@ -1164,7 +1238,7 @@ void solver::processBestTour()
 
         cout << "LKH Best Tour: ";
         for (int i = 0; i <= instance_size; i++)
-            cout << localBestTour[i] << " ";
+            cout << localBestTour[i] - 1 << " ";
         cout << endl;
 
         // Ensure the tour starts from node 1
@@ -1172,7 +1246,7 @@ void solver::processBestTour()
 
         cout << "Rotated Tour: ";
         for (int i = 0; i <= instance_size; i++)
-            cout << localBestTour[i] << " ";
+            cout << localBestTour[i] - 1 << " ";
         cout << endl;
 
         int safety_cost_check_total = 0;
@@ -1270,16 +1344,19 @@ void solver::processBestTour()
                                     bool is_best_suffix = lkh_suffix_cost == content.lower_bound - content.prefix_cost;
                                     history_node->is_best_suffix = is_best_suffix;
                                     std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << j - 1 << " (entry: " << old_prefix_cost << ", lkh: " << complete_subpath_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
+                                    checkSubpath(localBestTour, prefixKey, complete_subpath_cost, depth, j - 1);
                                 } else {
                                     std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << j - 1 << " (entry: " << content.prefix_cost << ", lkh: " << complete_subpath_cost << ")" << std::endl;
+                                    checkSubpath(localBestTour, prefixKey, complete_subpath_cost, depth, j - 1);
                                 }
                             } else {
                                 push_to_history_table(prefixKey, -1, &history_node, false, false, depth, complete_subpath_cost);
                                 std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << j - 1 << " (lkh cost: " << complete_subpath_cost << ")" << std::endl;
+                                checkSubpath(localBestTour, prefixKey, complete_subpath_cost, depth, j - 1);
                             }
                         }
                     } else {
-                        cout << "[PBT] Negative start to subpath cost at depth " << depth << " shift " << j - 1 << endl;
+                        cout << "[processBestTour] Negative start to subpath cost at depth " << depth << " shift " << j - 1 << endl;
                     }
                     
                     // remove old first of subpath (to shift right)
@@ -1341,9 +1418,11 @@ void solver::processBestTour()
                         bool is_best_suffix = lkh_suffix_cost == content.lower_bound - content.prefix_cost;
                         history_node->is_best_suffix = is_best_suffix;
                         std::cout << "[processBestTour] Prefix " << i << " Updated (entry: " << old_prefix_cost << ", lkh: " << prefix_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
+                        checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
 
                     } else {
                         std::cout << "[processBestTour] Prefix " << i << " Ignored (entry: " << content.prefix_cost << ", lkh: " << prefix_cost << ")" << std::endl;
+                        checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
                     }
                     // else
                     // {
@@ -1360,6 +1439,7 @@ void solver::processBestTour()
                     // if (node == NULL) std::cout << "[processBestTour] Prefix " << i << " FAILED TO ADD" << std::endl;
                     // else
                     std::cout << "[processBestTour] Prefix " << i << " Added (lkh cost: " << prefix_cost << ")" << std::endl;
+                    checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
                 }
             }
         }
