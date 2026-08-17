@@ -92,8 +92,8 @@ public:
     unsigned long long ready_nodes = 0;
     unsigned long long recursive_nodes = 0;
     
-    TraceReader(const std::string& path, int tree_depth = 0)
-        : path(path), file(path, std::ios::binary), tree(tree_depth) {}
+    TraceReader(const std::string& path, int tree_depth = 0, int tree_node_limit = 0)
+        : path(path), file(path, std::ios::binary), tree(tree_depth, tree_node_limit) {}
     unsigned long long next(size_t bytes);
     unsigned long long next_detail(size_t bytes);
     int read_node();

@@ -14,11 +14,18 @@ int main(int argc, char **argv) {
     if (argc <= 1) {
         std::cout << "Usage:\n" << "Analyze trace: ./sop_trace <path>\n" << "Print trace: ./sop_trace <path> -d <max_depth>\n" << "Compare traces: ./sop_trace <path1> <path2>" << std::endl;
         return 1;
+
     } else if (argc == 2) {
         single(argv[1]);
+
     } else if (argc >= 3) {
         if (argc >= 4 && strcmp(argv[2], "-d") == 0) {
-            single(argv[1], atoi(argv[3]));
+            if (argc >= 6 && strcmp(argv[4], "-l") == 0) {
+                single(argv[1], atoi(argv[3]), atoi(argv[5]));
+            } else {
+                single(argv[1], atoi(argv[3]));
+            }
+
         } else {
             compare(argv[1], argv[2]);
         }
@@ -27,8 +34,8 @@ int main(int argc, char **argv) {
 }
 
 
-void single(char *path, int max_depth) {
-    TraceReader reader(path, max_depth);
+void single(char *path, int max_depth, int node_limit) {
+    TraceReader reader(path, max_depth, node_limit);
 
     reader.parse();
 

@@ -42,6 +42,9 @@ void TraceTree::add_node(int node) {
 
 void TraceTree::finish_node() {
     if (max_depth < 1) return;
+    if (node_limit > 0 && current != nullptr && current->enumerated_nodes < node_limit) {
+        current->children.clear();
+    }
 
     stack.pop_back();
     current = stack.back();
