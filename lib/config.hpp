@@ -60,6 +60,9 @@ struct Config {
     /* If trace is enabled, set the detail level of the trace */
     int trace_detail_level = 0;
 
+    /* Enable diagnostic to manually check if each node matches an LKH prefix/subpath */
+    bool enable_manual_match_check = false;
+
     /* UNUSED */
 
     int assign_workload_level = 150;

@@ -46,6 +46,7 @@ static bool enable_reuse_lkh_thread = true;
 static bool enable_finish_lkh_before_bb = false;
 static bool enable_process_lkh_subpaths = true;
 static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
+static bool enable_manual_match_check = false;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -231,6 +232,11 @@ struct MatchInfo {
 };
 
 MatchInfo check_match(sop_state& problem_state) {
+    if (!enable_manual_match_check)
+        return {
+            .available = false
+        };
+
     if (!lkh_processed_by_depth)
         return {
             .available = false
@@ -273,6 +279,8 @@ MatchInfo check_match(sop_state& problem_state) {
 }
 
 void log_node(int thread, sop_state& problem_state, MatchInfo& match_info, NodeAction action) {
+    if (!enable_manual_match_check) return;
+
     if (!match_info.available) {
         static bool printed = false;
         if (!lkh_processed_by_depth && lkh_entry_processed && !printed) {
@@ -440,6 +448,7 @@ void solver::assign_parameter(Config config)
     enable_finish_lkh_before_bb = config.finish_lkh_before_bb;
     enable_process_lkh_subpaths = config.process_lkh_subpaths;
     trace_detail_level = static_cast<TraceDetailLevel>(config.trace_detail_level);
+    enable_manual_match_check = config.enable_manual_match_check || (trace_enabled && config.trace_detail_level == DETAIL_NORMAL);
 
     return;
 }
@@ -649,33 +658,35 @@ void solver::solve(string f_name, int thread_num)
     }
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
-    vector<unsigned long long> match_actions_sum = vector<unsigned long long>(4);
-    vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(4);
-    vector<unsigned long long> subpath_match_actions_sum = vector<unsigned long long>(4);
-    for (int i = 0; i < match_actions.size(); i++) {
-        for (int j = 0; j < 4; j++) {
-            match_actions_sum[j] += match_actions[i][j];
-            no_match_actions_sum[j] += no_match_actions[i][j];
-            subpath_match_actions_sum[j] += subpath_match_actions[i][j];
+    if (enable_manual_match_check) {
+        vector<unsigned long long> match_actions_sum = vector<unsigned long long>(4);
+        vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(4);
+        vector<unsigned long long> subpath_match_actions_sum = vector<unsigned long long>(4);
+        for (int i = 0; i < match_actions.size(); i++) {
+            for (int j = 0; j < 4; j++) {
+                match_actions_sum[j] += match_actions[i][j];
+                no_match_actions_sum[j] += no_match_actions[i][j];
+                subpath_match_actions_sum[j] += subpath_match_actions[i][j];
+            }
         }
-    }
-    std::cout << "[Match] Not Pruned:                   " << match_actions_sum[NOT_PRUNED] << endl;
-    std::cout << "[Match] Pruned by best cost:          " << match_actions_sum[PRUNE_BEST_COST] << endl;
-    std::cout << "[Match] Pruned by history:            " << match_actions_sum[PRUNE_HISTORY] << endl;
-    std::cout << "[Match] Pruned by lower bound:        " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
-    std::cout << "[Sub Match] Not Pruned:               " << subpath_match_actions_sum[NOT_PRUNED] << endl;
-    std::cout << "[Sub Match] Pruned by best cost:      " << subpath_match_actions_sum[PRUNE_BEST_COST] << endl;
-    std::cout << "[Sub Match] Pruned by history:        " << subpath_match_actions_sum[PRUNE_HISTORY] << endl;
-    std::cout << "[Sub Match] Pruned by lower bound:    " << subpath_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
-    std::cout << "[No Match] Not Pruned:                " << no_match_actions_sum[NOT_PRUNED] << endl;
-    std::cout << "[No Match] Pruned by best cost:       " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
-    std::cout << "[No Match] Pruned by history:         " << no_match_actions_sum[PRUNE_HISTORY] << endl;
-    std::cout << "[No Match] Pruned by lower bound:     " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[Match] Not Pruned:                   " << match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[Match] Pruned by best cost:          " << match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[Match] Pruned by history:            " << match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[Match] Pruned by lower bound:        " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[Sub Match] Not Pruned:               " << subpath_match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[Sub Match] Pruned by best cost:      " << subpath_match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[Sub Match] Pruned by history:        " << subpath_match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[Sub Match] Pruned by lower bound:    " << subpath_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[No Match] Not Pruned:                " << no_match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[No Match] Pruned by best cost:       " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[No Match] Pruned by history:         " << no_match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[No Match] Pruned by lower bound:     " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
 
-    int nodes_before_lkh_processed_sum = 0;
-    for (int i = 0; i < nodes_before_lkh_processed.size(); i++)
-        nodes_before_lkh_processed_sum += nodes_before_lkh_processed[i];
-    std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
+        int nodes_before_lkh_processed_sum = 0;
+        for (int i = 0; i < nodes_before_lkh_processed.size(); i++)
+            nodes_before_lkh_processed_sum += nodes_before_lkh_processed[i];
+        std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
+    }
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -1129,6 +1140,7 @@ void rotateTourToStartFromNode1(int *tour, int size)
     delete[] rotatedTour; // Clean up temporary array
 }
 void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, int expected_shift) {
+    if (!enable_manual_match_check) return;
     int node_to_order[instance_size_global];
     for (int i = 0; i < instance_size_global; i++) {
         node_to_order[tour[i] - 1] = i;
@@ -1310,13 +1322,15 @@ void solver::processBestTour()
             // Create the key with the size of the current prefix path
             int depth = i + 1;
 
-            lkh_path_by_depth[depth] = bit_vector;
-            lkh_last_node_by_depth[depth] = dst;
-            lkh_cost_by_depth[depth] = prefix_cost;
+            if (enable_manual_match_check) {
+                lkh_path_by_depth[depth] = bit_vector;
+                lkh_last_node_by_depth[depth] = dst;
+                lkh_cost_by_depth[depth] = prefix_cost;
 
-            lkh_subpaths_by_depth[depth] = vector<boost::dynamic_bitset<>>();
-            lkh_subpath_end_nodes_by_depth[depth] = vector<pair<int, int>>();
-            lkh_subpath_cost_by_depth[depth] = vector<int>();
+                lkh_subpaths_by_depth[depth] = vector<boost::dynamic_bitset<>>();
+                lkh_subpath_end_nodes_by_depth[depth] = vector<pair<int, int>>();
+                lkh_subpath_cost_by_depth[depth] = vector<int>();
+            }
 
             if (depth >= 4) {
                 boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
@@ -1327,10 +1341,14 @@ void solver::processBestTour()
                     int end = localBestTour[j + depth - 2] - 1;
                     int start_to_subpath_cost = cost_graph[localBestTour[0] - 1][start].weight;
                     if (start_to_subpath_cost >= 0) {
-                        lkh_subpaths_by_depth[depth].push_back(subpath_bit_vector);
-                        lkh_subpath_end_nodes_by_depth[depth].push_back(make_pair(start, end));
                         int complete_subpath_cost = subpath_cost + start_to_subpath_cost;
-                        lkh_subpath_cost_by_depth[depth].push_back(complete_subpath_cost);
+
+                        if (enable_manual_match_check) {
+                            lkh_subpaths_by_depth[depth].push_back(subpath_bit_vector);
+                            lkh_subpath_end_nodes_by_depth[depth].push_back(make_pair(start, end));
+                            lkh_subpath_cost_by_depth[depth].push_back(complete_subpath_cost);
+                        }
+
                         if (enable_process_lkh_best_tour && enable_process_lkh_subpaths && j != 1) {
                             pair<boost::dynamic_bitset<>, int> prefixKey = make_pair(subpath_bit_vector, end);
                             HistoryNode *history_node = history_table.retrieve(prefixKey, depth);
@@ -1443,7 +1461,8 @@ void solver::processBestTour()
                 }
             }
         }
-        lkh_processed_by_depth = true;
+        if (enable_manual_match_check)
+            lkh_processed_by_depth = true;
     }
     else
     {
