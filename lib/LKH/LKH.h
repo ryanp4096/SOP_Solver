@@ -80,8 +80,13 @@ MergeTourFunction MergeWithTour;
 /* B&B variable*/
 extern pthread_mutex_t Sol_lock;
 extern int best_cost;
-extern int* bestBB_tour;
+extern int *bestBB_tour;
+extern int *lkh_best_tour;
+extern bool stop_lkh_flag;
 extern bool BB_Complete;
+extern int best_cost_temp;
+extern int instance_size_global;
+extern float last_updated_time_by_LKH;
 extern bool BB_SolFound;
 
 /* The Node structure is used to represent nodes (cities) of the problem */

@@ -1,6 +1,7 @@
 #ifndef SOLVER_H
 #define SOLVER_H
 
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -31,6 +32,9 @@
 #include "local_pool.hpp"
 #include "graph.hpp"
 #include "hungarian.hpp"
+#include "trace.hpp"
+#include "config.hpp"
+#include "memory.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -92,6 +96,11 @@ private:
 
     int instance_size = -1;  // number of nodes in the graph, including virtual starting and ending nodes ("real" nodes would be instance_size - 2)
     sop_state problem_state; // this thread's current state
+    
+    // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
+    // Safe because each thread gets its own solver instance
+    std::deque<path_node> ready_list;
+    
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
 
@@ -117,6 +126,9 @@ private:
     //  int last_node = -1;
     //  bool stop_init = false; //INVESTIGATE; might be whether this thread has ever been stopped before
 
+    // Trace File
+    Trace trace;
+
     /* Build graph based on .sop input file specified in filename. */
     void retrieve_input();
     /* Transforms dependency and Hungarian graphs, adding redundant edges from grandparents, great grandparents, etc., and initializes in_degree. */
@@ -137,13 +149,17 @@ private:
     /* Returns true if any sop_state in the container has a depth different than any other, false otherwise. Used for initial splitting in solve_parallel. */
     bool split_level_check(deque<sop_state> *solver_container);
 
+    /* To process the best tour path provided by LKH */
+    void processBestTour();
+    /* Starts enumeration */
+    void start_thread();
     /* Recursive function that each thread runs to process its assigned spaces of the enumeration tree, checking one node and then its children and their children, etc. */
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.
         Return - true if the node was discarded, false if its subspace must still be enumerated */
     bool enumeration_pre_check(path_node &active_node);
     /*called when pruning a node in enumerate*/
-    void prune(int source_node, int taken_node);
+    void prune(int source_node, int taken_node, int edge_weight);
 
     /* Computes a dynamic lower bound based on the previous path with this node added, using the MCPM relaxation.
         Contains the fix and undue calls internally.
@@ -159,13 +175,14 @@ private:
         entry - a return variable, a pointer to the history node corresponding to this path
         cost - the cost of the current path
         Return - true if this node still needs to be processed, false if it should be pruned */
-    bool history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry);
+    bool history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source, int destination);
     /* Add a new entry to the history table.
         key - the history key corresponding to the partial path this entry represents
         lower_bound - the lower bound cost of a complete solution beginning with this path
         entry - a return variable, holds a pointer to the entry created, unless NULL is passed
         backtracked - if the subtree under this node has already been fully explored */
-    void push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked);
+    void push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
+
 
     /* returns true on success */
     bool workload_request();
@@ -193,7 +210,9 @@ private:
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
 public:
     /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(vector<string> setting);
+    void assign_parameter(Config config);
+    /* Enable writing a trace file of the algorithm to the given path. */
+    void enable_trace(string path);
     /* Primary function that initializes and begins the solver. */
     void solve(string f_name, int thread_num);
 };

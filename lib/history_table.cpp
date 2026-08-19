@@ -53,21 +53,23 @@ HistoryNode *Memory_Module::retrieve_his_node()
 
 History_Table::History_Table(size_t size)
 {
-    struct sysinfo info;
-    if (sysinfo(&info) != 0)
-    {
-        cout << "can't retrieve system memory info\n";
-        exit(EXIT_FAILURE);
-    }
+    // struct sysinfo info;
+    // if (sysinfo(&info) != 0)
+    // {
+    //     cout << "can't retrieve system memory info\n";
+    //     exit(EXIT_FAILURE);
+    // }
+    MemoryInfo info = getSystemMemory();
+
     num_buckets = size;
-    total_ram = info.totalram;
-    max_size = (double)info.freeram * MEMORY_RESTRIC - (size * 4);
-    cout << "Total RAM (in bytes): " << total_ram / 1000000 << " MB" << std::endl;
-    cout << "allowed RAM size (in bytes): " << max_size / 1000000 << " MB" << std::endl;
+    total_ram = info.totalBytes;
+    max_size = (double)info.availableBytes * MEMORY_RESTRIC - (size * 4);
+    cout << "Total RAM (in bytes): " << total_ram / 1048576 << " MB" << std::endl;
+    cout << "allowed RAM size (in bytes): " << max_size / 1048576 << " MB" << std::endl;
     current_size = 0;
 
-    // std::cout << "Max bucket size is " << max_size / 1000000 << " MB" << std::endl;
-    // std::cout << "Total Available Memory In OS is " << info.totalram / 1000000 << " MB" << std::endl;
+    // std::cout << "Max bucket size is " << max_size / 1048576 << " MB" << std::endl;
+    // std::cout << "Total Available Memory In OS is " << info.totalram / 1048576 << " MB" << std::endl;
 
     insert_count = 0;
 }
@@ -102,22 +104,23 @@ size_t History_Table::get_current_size() { return current_size; }
 
 unsigned long History_Table::get_free_mem()
 {
-    struct sysinfo info;
-    if (sysinfo(&info) != 0)
-    {
-        cout << "can't retrieve sys mem info\n";
-        exit(1);
-    }
-    return (double)info.freeram;
+    // struct sysinfo info;
+    // if (sysinfo(&info) != 0)
+    // {
+    //     cout << "can't retrieve sys mem info\n";
+    //     exit(1);
+    // }
+    MemoryInfo info = getSystemMemory();
+    return (double)info.availableBytes;
 }
 
 void History_Table::print_curmem()
 {
-    std::cout << "Current memory is " << current_size / 1000000 << " MB" << std::endl;
+    std::cout << "Current memory is " << current_size / 1048576 << " MB" << std::endl;
     return;
 }
 
-HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size)
+HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix)
 {
     int group_index = get_bucket_index(depth);
 
@@ -159,6 +162,7 @@ HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, u
     node->explored = backtracked;
     node->entry.store({prefix_cost, lower_bound});
     node->active_threadID = thread_id;
+    node->is_best_suffix = is_best_suffix;
     // node->level = index;
     // node->depth = depth;
     // node->usage_cnt = 0;
@@ -185,6 +189,8 @@ HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, u
 
 HistoryNode *History_Table::retrieve(Key &key, int depth)
 {
+    if (depth < gp_depth)
+        return NULL;
     int group_index = get_bucket_index(depth);
 
     if (!is_data_available[group_index])
@@ -341,7 +347,7 @@ bool History_Table::free_subtable_memory(float *mem_limit)
                 cout << "starting the deallocation of memory\n";
                 current_size = total_ram - get_free_mem();
 
-                std::cout << "current used size before (in bytes): " << current_size / 1000000 << " MB" << std::endl;
+                std::cout << "current used size before (in bytes): " << current_size / 1048576 << " MB" << std::endl;
 
                 for (auto &allocator : memory_allocators[i])
                 {
@@ -351,7 +357,7 @@ bool History_Table::free_subtable_memory(float *mem_limit)
                 std::cout << "Freed memory for subtable: " << i + 1 << std::endl;
 
                 current_size = total_ram - get_free_mem();
-                std::cout << "current used size after freeing space (in bytes): " << current_size / 1000000 << " MB" << std::endl;
+                std::cout << "current used size after freeing space (in bytes): " << current_size / 1048576 << " MB" << std::endl;
                 // for (int k = 0; k < 3; k++)
                 // {
                 //     cout << block_count[k] << " ";
@@ -416,7 +422,7 @@ void History_Table::track_entries_and_references()
 
 int History_Table::get_bucket_index(int depth)
 {
-    if (depth == gp_depth)
+    if (depth <= gp_depth)
         return 0;
     else if (depth <= num_of_groups * groups_size + gp_depth)
         return std::ceil(static_cast<double>(depth - gp_depth) / groups_size) - 1;

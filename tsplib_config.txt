@@ -42,3 +42,27 @@ Bucket_size = 0
 
 //Enable Heuristic: Treat 3 subtable as 1 table if the global pool is empty before hitting the first threshold
 Enable = 0
+
+// Stop LKH after this duration and re use the thread in the solver
+END_LKH_TIME = 100
+
+// Time in seconds that decide wheather the LKH entry is stable i.e. unchanged for this amount of time and should be processed
+STABLE_LKH_ENTRY_DURATION = 10
+
+// Process the best lkh tour into the history table after lkh end time reached (1 for enable 0 for disable)
+PROCESS_LKH_BEST_TOUR = 1
+
+// Reuse lkh thread to run branch and bound after lkh end time reached (1 for enable 0 for disable)
+REUSE_LKH_THREAD = 1
+
+// Finish lkh before starting branch and bound, instead of running in parallel (for debugging) (1 for enable 0 for disable)
+FINISH_LKH_BEFORE_BB = 0
+
+// Process each subpath of the lkh tour as a separate history table entry (1 for enable 0 for disable)
+PROCESS_LKH_SUBPATHS = 1
+
+// If trace is enabled, set the detail level of the trace (0 = normal, 1 = compact)
+TRACE_DETAIL_LEVEL = 0
+
+// For debugging: manually check whether the current path at each node should match with an LKH prefix/subpath history entry (1 for enable, 0 for disable)
+ENABLE_MANUAL_MATCH_CHECK = 0
