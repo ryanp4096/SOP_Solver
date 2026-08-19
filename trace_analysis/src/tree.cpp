@@ -1,6 +1,7 @@
 #include "tree.hpp"
 
 #include <iostream>
+#include <algorithm>
 
 void TraceTree::initial_state(std::vector<int> &nodes) {
     if (max_depth < 1) return;
@@ -42,8 +43,20 @@ void TraceTree::add_node(int node) {
 
 void TraceTree::finish_node() {
     if (max_depth < 1) return;
-    if (node_limit > 0 && current != nullptr && current->enumerated_nodes < node_limit) {
-        current->children.clear();
+    if (node_limit > 0 && current != nullptr) {
+        if (current->enumerated_nodes < node_limit) {
+            current->children.clear();
+        } else {
+            int node_lim = node_limit;
+            current->children.erase(
+                std::remove_if(
+                    current->children.begin(),
+                    current->children.end(),
+                    [node_lim](const TreeNode &c) { return c.enumerated_nodes < node_lim; }
+                ),
+                current->children.end()
+            );
+        }
     }
 
     stack.pop_back();
