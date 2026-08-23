@@ -217,8 +217,9 @@ void lkh()
     return;
 }
 
-enum NodeAction {PRUNE_BEST_COST, PRUNE_HISTORY, PRUNE_LOWER_BOUND, NOT_PRUNED};
-string node_action_names[] = {"PRUNE_BEST_COST", "PRUNE_HISTORY", "PRUNE_LOWER_BOUND", "NOT PRUNED"};
+enum NodeAction {PRUNE_BEST_COST, PRUNE_HISTORY, PRUNE_LOWER_BOUND, NOT_PRUNED, PRUNE_SUBPATH_HISTORY};
+string node_action_names[] = {"PRUNE_BEST_COST", "PRUNE_HISTORY", "PRUNE_LOWER_BOUND", "NOT PRUNED", "PRUNE_SUBPATH_HISTORY"};
+static int node_action_count = 5;
 static vector<vector<unsigned long long>> match_actions;
 static vector<vector<unsigned long long>> subpath_match_actions;
 static vector<vector<unsigned long long>> no_match_actions;
@@ -659,28 +660,31 @@ void solver::solve(string f_name, int thread_num)
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
     if (enable_manual_match_check) {
-        vector<unsigned long long> match_actions_sum = vector<unsigned long long>(4);
-        vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(4);
-        vector<unsigned long long> subpath_match_actions_sum = vector<unsigned long long>(4);
+        vector<unsigned long long> match_actions_sum = vector<unsigned long long>(node_action_count);
+        vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(node_action_count);
+        vector<unsigned long long> subpath_match_actions_sum = vector<unsigned long long>(node_action_count);
         for (int i = 0; i < match_actions.size(); i++) {
-            for (int j = 0; j < 4; j++) {
+            for (int j = 0; j < node_action_count; j++) {
                 match_actions_sum[j] += match_actions[i][j];
                 no_match_actions_sum[j] += no_match_actions[i][j];
                 subpath_match_actions_sum[j] += subpath_match_actions[i][j];
             }
         }
-        std::cout << "[Match] Not Pruned:                   " << match_actions_sum[NOT_PRUNED] << endl;
-        std::cout << "[Match] Pruned by best cost:          " << match_actions_sum[PRUNE_BEST_COST] << endl;
-        std::cout << "[Match] Pruned by history:            " << match_actions_sum[PRUNE_HISTORY] << endl;
-        std::cout << "[Match] Pruned by lower bound:        " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
-        std::cout << "[Sub Match] Not Pruned:               " << subpath_match_actions_sum[NOT_PRUNED] << endl;
-        std::cout << "[Sub Match] Pruned by best cost:      " << subpath_match_actions_sum[PRUNE_BEST_COST] << endl;
-        std::cout << "[Sub Match] Pruned by history:        " << subpath_match_actions_sum[PRUNE_HISTORY] << endl;
-        std::cout << "[Sub Match] Pruned by lower bound:    " << subpath_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
-        std::cout << "[No Match] Not Pruned:                " << no_match_actions_sum[NOT_PRUNED] << endl;
-        std::cout << "[No Match] Pruned by best cost:       " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
-        std::cout << "[No Match] Pruned by history:         " << no_match_actions_sum[PRUNE_HISTORY] << endl;
-        std::cout << "[No Match] Pruned by lower bound:     " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[Match] Not Pruned:                    " << match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[Match] Pruned by best cost:           " << match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[Match] Pruned by history:             " << match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[Match] Pruned by lower bound:         " << match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[Match] Pruned by subpath history:     " << match_actions_sum[PRUNE_SUBPATH_HISTORY] << endl;
+        std::cout << "[Sub Match] Not Pruned:                " << subpath_match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[Sub Match] Pruned by best cost:       " << subpath_match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[Sub Match] Pruned by history:         " << subpath_match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[Sub Match] Pruned by lower bound:     " << subpath_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[Sub Match] Pruned by subpath history: " << subpath_match_actions_sum[PRUNE_SUBPATH_HISTORY] << endl;
+        std::cout << "[No Match] Not Pruned:                 " << no_match_actions_sum[NOT_PRUNED] << endl;
+        std::cout << "[No Match] Pruned by best cost:        " << no_match_actions_sum[PRUNE_BEST_COST] << endl;
+        std::cout << "[No Match] Pruned by history:          " << no_match_actions_sum[PRUNE_HISTORY] << endl;
+        std::cout << "[No Match] Pruned by lower bound:      " << no_match_actions_sum[PRUNE_LOWER_BOUND] << endl;
+        std::cout << "[No Match] Pruned by subpath history:  " << no_match_actions_sum[PRUNE_SUBPATH_HISTORY] << endl;
 
         int nodes_before_lkh_processed_sum = 0;
         for (int i = 0; i < nodes_before_lkh_processed.size(); i++)
@@ -1030,9 +1034,9 @@ void solver::solve_parallel()
     no_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     subpath_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     for (int i = 0; i < thread_cnt + 1; i++) {
-        match_actions[i] = vector<unsigned long long>(4);
-        no_match_actions[i] = vector<unsigned long long>(4);
-        subpath_match_actions[i] = vector<unsigned long long>(4);
+        match_actions[i] = vector<unsigned long long>(node_action_count);
+        no_match_actions[i] = vector<unsigned long long>(node_action_count);
+        subpath_match_actions[i] = vector<unsigned long long>(node_action_count);
     }
     nodes_before_lkh_processed = vector<int>(thread_cnt + 1);
 
@@ -1754,6 +1758,94 @@ void solver::enumerate()
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
+
+                // vector<Subpath> new_subpaths;
+                // new_subpaths.reserve(problem_state.subpaths.size() + 1);
+
+                // boost::dynamic_bitset<> b(instance_size, false);
+                // b[taken_node] = true;
+                // new_subpaths.push_back({
+                //     .bit_vector = b,
+                //     .first_node = taken_node,
+                //     .last_node = taken_node,
+                //     .depth = 1,
+                //     .cost = 0
+                // });
+
+                // for (Subpath subpath : problem_state.subpaths) {
+                //     subpath.bit_vector[taken_node] = true;
+                //     subpath.last_node = taken_node;
+                //     subpath.depth++;
+                //     new_subpaths.push_back(subpath);
+                // }
+
+                boost::dynamic_bitset<> subpath_bit_vector(instance_size, false);
+                subpath_bit_vector[taken_node] = true;
+                int subpath_cost = 0;
+                bool pruned = false;
+                for (int length = 2; length < problem_state.current_path.size(); length++) {
+                    int src = problem_state.current_path[problem_state.current_path.size() - length];
+                    int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
+                    subpath_bit_vector[src] = true;
+                    subpath_cost += cost_graph[src][dst].weight;
+                    if (length < 4) continue;
+
+                    SubpathKey key = {
+                        .bit_vector = subpath_bit_vector,
+                        .first_node = src,
+                        .last_node = taken_node
+                    };
+                    HistoryNode *history_node = history_table.retrieve_subpath(key, length);
+                    if (history_node == NULL) {
+                        if (!limit_insertion) {
+                            if (history_table.get_current_size() < mem_limit * history_table.get_max_size()) {
+                                history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                            } else if (number_of_groups == 1) {
+                                history_table.free_subtable_memory(&mem_limit);
+                                std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+                                limit_insertion = true;
+                            } else {
+                                if (!is_all_table_blocked)
+                                {
+                                    if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
+                                        history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                }
+                                else
+                                {
+                                    if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
+                                    {
+                                        bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
+                                        if (is_space_increased_or_available)
+                                        {
+                                            if (problem_state.current_path.size() <= bucket_size)
+                                                history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                        }
+                                        else
+                                        {
+                                            cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+                                            limit_insertion = true;
+                                        }
+                                    }
+                                    else
+                                        history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                }
+                            }
+                        }
+                    } else {
+                        HistoryContent content = history_node->entry.load();
+                        if (subpath_cost > content.prefix_cost) {
+                            pruned_count++;
+                            prune(source_node, taken_node, edge_weight);
+                            pruned = true;
+                            log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
+                            break;
+                        } else {
+                            history_node->entry.store({subpath_cost, content.lower_bound});
+                        }
+                    }
+                }
+                if (pruned) continue;
+
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);

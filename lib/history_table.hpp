@@ -21,6 +21,50 @@ typedef pair<boost::dynamic_bitset<>, int> Key; // a key to the history table
 typedef pair<Key, HistoryNode *> Entry;         // a single entry in the history table
 typedef list<Entry> Bucket;                     // a bucket of
 
+/**
+ * Allocates memory for a given type. Used when frequently allocating memory for a given type to prevent high number of memory allocations, by allocating one large block of memory at a time.
+ */
+template <typename T>
+class MemoryAllocator {
+private:
+    vector<T *> blocks;
+    unsigned int items_count = 0;
+    unsigned int items_per_block;
+public:
+    MemoryAllocator(unsigned int items_per_block = HIS_BLK_SIZE)
+        : items_per_block(items_per_block) {}
+    ~MemoryAllocator();
+    /**
+     * Allocate memory to store type T
+     */
+    T *allocate();
+};
+
+struct Subpath {
+    boost::dynamic_bitset<> bit_vector;
+    int first_node;
+    int last_node;
+    int depth;
+    int cost;
+};
+struct SubpathKey {
+    boost::dynamic_bitset<> bit_vector;
+    int first_node;
+    int last_node;
+};
+struct SubpathEntry {
+    SubpathKey key;
+    HistoryNode *node;
+};
+typedef list<SubpathEntry> SubpathBucket;
+struct SubpathMap {
+    vector<SubpathBucket *> buckets;
+    vector<spin_lock> locks;
+    vector<MemoryAllocator<SubpathBucket>> bucket_allocators;
+    vector<MemoryAllocator<HistoryNode>> node_allocators;
+};
+
+
 /* Manages memory allocation for the history table in blocks in order to reduce system call overhead. */
 class Memory_Module
 {
@@ -55,6 +99,8 @@ private:
     vector<vector<Bucket *>> map;                    // the collection of history nodes
     vector<vector<spin_lock>> table_lock;            // a read-write lock for every X adjacent buckets, defined by COVER_AREA
     vector<vector<Memory_Module>> memory_allocators; // a memory allocator for each thread, in order to reduce synchronization overhead
+
+    vector<SubpathMap> subpath_maps;
 
     unsigned long total_ram = 0;        // the total amount of memory in the system, in bytes
     unsigned long max_size = 0;         // the maximum allowed size of the history table, in bytes
@@ -102,6 +148,10 @@ public:
         key - the history key corresponding to the partial path this entry represents
         Return- a pointer to the node found, if any */
     HistoryNode *retrieve(Key &key, int depth);
+
+    HistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
+    HistoryNode *retrieve_subpath(SubpathKey &key, int depth);
+
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
     bool free_subtable_memory(float *mem_limit); // free the history table memory
     void track_entries_and_references();         // to track down the entries and its reference in history_table

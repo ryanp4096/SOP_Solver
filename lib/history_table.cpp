@@ -10,6 +10,24 @@ int gp_depth = 0;
 std::mutex mtx;
 std::condition_variable cv;
 
+template <typename T>
+MemoryAllocator<T>::~MemoryAllocator() {
+    for (T *b : blocks) {
+        delete[] b;
+    }
+}
+template <typename T>
+T *MemoryAllocator<T>::allocate() {
+    if (blocks.empty() || items_count >= items_per_block) {
+        T *block = new T[items_per_block];
+        blocks.push_back(block);
+        items_count = 1;
+        return block;
+    } else {
+        return &blocks.back()[items_count++];
+    }
+}
+
 Memory_Module::Memory_Module()
 {
     bucket_block = new Bucket[BUCKET_BLK_SIZE];
@@ -85,6 +103,8 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
 
     table_lock.resize(number_of_groups);
 
+    subpath_maps.resize(number_of_groups);
+
     blocked_groups.resize(number_of_groups, false);
     is_data_available.resize(number_of_groups, true);
 
@@ -96,6 +116,11 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
         memory_allocators[i].resize(thread_num);
 
         table_lock[i] = vector<spin_lock>(size / COVER_AREA + 1);
+
+        subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathBucket>(BUCKET_BLK_SIZE));
+        subpath_maps[i].node_allocators.resize(thread_num, MemoryAllocator<HistoryNode>(HIS_BLK_SIZE));
+        subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
+        subpath_maps[i].buckets.resize(size, NULL);
     }
 }
 
@@ -233,6 +258,108 @@ HistoryNode *History_Table::retrieve(Key &key, int depth)
 
     return NULL;
 }
+
+HistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth)
+{
+    int group_index = get_bucket_index(depth);
+
+    if (blocked_groups[group_index])
+        return NULL;
+
+    SubpathMap &map = subpath_maps[group_index];
+
+    HistoryNode *node = map.node_allocators[thread_id].allocate();
+
+    if (thread_id % 4 == 0)
+    {
+        insert_count++;
+        if (insert_count >= 100000)
+        {
+            current_size = total_ram - get_free_mem();
+            insert_count = 0;
+        }
+    }
+
+    if (node == NULL)
+        return NULL;
+
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket = (val + key.first_node * 10000 + key.last_node) % num_buckets;
+
+    node->explored = false;
+    node->entry.store({subpath_cost, -1});
+    node->active_threadID = thread_id;
+    node->is_best_suffix = false;
+
+    spin_lock &lock = map.locks[bucket / COVER_AREA];
+    lock.lock();
+    if (!is_data_available[group_index] || blocked_groups[group_index])
+    {
+        block_count[group_index]++;
+        lock.unlock();
+        return NULL;
+    }
+
+    if (map.buckets[bucket] == NULL)
+        map.buckets[bucket] = map.bucket_allocators[thread_id].allocate();
+    map.buckets[bucket]->push_back({key, node});
+    lock.unlock();
+    return node;
+}
+
+HistoryNode *History_Table::retrieve_subpath(SubpathKey &key, int depth)
+{
+    int group_index = get_bucket_index(depth);
+
+    if (!is_data_available[group_index])
+        return NULL;
+
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket_index = (val + key.first_node * 10000 + key.last_node) % num_buckets;
+
+    SubpathMap &map = subpath_maps[group_index];
+    spin_lock &lock = map.locks[bucket_index / COVER_AREA];
+    SubpathBucket *bucket = map.buckets[bucket_index];
+
+    lock.lock();
+    if (bucket == NULL)
+    {
+        lock.unlock();
+        return NULL;
+    }
+    else if (bucket->size() == 1)
+    {
+        if (
+            key.first_node == bucket->front().key.first_node &&
+            key.last_node == bucket->front().key.last_node &&
+            key.bit_vector == bucket->front().key.bit_vector
+        ) {
+            bucket->front().node->referred = true;
+            lock.unlock();
+            return bucket->front().node;
+        } else {
+            lock.unlock();
+            return NULL;
+        }
+    }
+    if (is_data_available[group_index])
+        for (auto iter = bucket->begin(); iter != bucket->end(); iter++)
+        {
+            if (
+                key.first_node == iter->key.first_node &&
+                key.last_node == iter->key.last_node &&
+                key.bit_vector == iter->key.bit_vector
+            ) {
+                iter->node->referred = true;
+                lock.unlock();
+                return iter->node;
+            }
+        }
+
+    lock.unlock();
+    return NULL;
+}
+
 
 bool History_Table::check_and_manage_memory(int depth, float *updated_mem_limit, bool *is_all_table_blocked)
 {

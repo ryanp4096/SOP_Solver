@@ -86,6 +86,7 @@ struct sop_state
     // int initial_depth = 0; //depth at which enumeration began once GPQ was initially filled
     // int suffix_cost = 0;
     // unsigned long long current_node_value = -1; //the portion out of ULLONG_MAX of the working tree that is under this node (the partial path represented by this state)
+    // std::vector<Subpath> subpaths;
 };
 
 /* A single B&B solver assigned one to each thread to process possible paths. */
