@@ -92,8 +92,9 @@ History_Table::History_Table(size_t size)
     insert_count = 0;
 }
 
-void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size)
+void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size, bool enable_subpath_history_table)
 {
+    this->enable_subpath_history_table = enable_subpath_history_table;
     num_of_groups = number_of_groups;
     groups_size = group_size;
     block_count.resize(number_of_groups, 0);
@@ -103,7 +104,9 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
 
     table_lock.resize(number_of_groups);
 
-    subpath_maps.resize(number_of_groups);
+    if (enable_subpath_history_table) {
+        subpath_maps.resize(number_of_groups);
+    }
 
     blocked_groups.resize(number_of_groups, false);
     is_data_available.resize(number_of_groups, true);
@@ -117,9 +120,11 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
 
         table_lock[i] = vector<spin_lock>(size / COVER_AREA + 1);
 
-        subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
-        subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
-        subpath_maps[i].buckets = vector<atomic<SubpathEntry *>>(size);
+        if (enable_subpath_history_table) {
+            subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
+            subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
+            subpath_maps[i].buckets = vector<atomic<SubpathEntry *>>(size);
+        }
     }
 }
 
@@ -260,6 +265,7 @@ HistoryNode *History_Table::retrieve(Key &key, int depth)
 
 SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth)
 {
+    if (!enable_subpath_history_table) return NULL;
     int group_index = get_bucket_index(depth);
 
     if (blocked_groups[group_index])
@@ -303,6 +309,7 @@ SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_c
 
 SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, int depth)
 {
+    if (!enable_subpath_history_table) return NULL;
     int group_index = get_bucket_index(depth);
 
     if (!is_data_available[group_index])

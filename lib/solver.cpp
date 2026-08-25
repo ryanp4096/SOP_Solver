@@ -47,6 +47,7 @@ static bool enable_finish_lkh_before_bb = false;
 static bool enable_process_lkh_subpaths = true;
 static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
 static bool enable_manual_match_check = false;
+static bool enable_subpath_history_table = true;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -450,6 +451,7 @@ void solver::assign_parameter(Config config)
     enable_process_lkh_subpaths = config.process_lkh_subpaths;
     trace_detail_level = static_cast<TraceDetailLevel>(config.trace_detail_level);
     enable_manual_match_check = config.enable_manual_match_check || (trace_enabled && config.trace_detail_level == DETAIL_NORMAL);
+    enable_subpath_history_table = config.enable_subpath_history_table;
 
     return;
 }
@@ -1103,14 +1105,14 @@ void solver::solve_parallel()
     return;
 }
 
-void rotateTourToStartFromNode1(int *tour, int size)
+void rotateTourToStartFromNode0(int *tour, int size)
 {
     int start_index = 0;
 
     // Find the index where node 1 is located
     for (int i = 0; i < size; i++)
     {
-        if (tour[i] == 1)
+        if (tour[i] == 0)
         {
             start_index = i;
             break;
@@ -1124,7 +1126,7 @@ void rotateTourToStartFromNode1(int *tour, int size)
     // Create a temporary array to store the rotated tour
     int *rotatedTour = new int[size + 1]; // +1 because tours are 1-indexed
 
-    // Rotate the tour so that it starts from node 1
+    // Rotate the tour so that it starts from node 0
     int j = 0;
     for (int i = start_index; i < size; i++, j++)
     {
@@ -1147,7 +1149,7 @@ void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, in
     if (!enable_manual_match_check) return;
     int node_to_order[instance_size_global];
     for (int i = 0; i < instance_size_global; i++) {
-        node_to_order[tour[i] - 1] = i;
+        node_to_order[tour[i]] = i;
     }
     boost::dynamic_bitset<> order_bitset(instance_size_global, false);
     int highest_index = -1;
@@ -1202,7 +1204,7 @@ void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, in
     int last = -1;
     for (int i = 0; i < instance_size_global; i++) {
         if (order_bitset[i]) {
-            int node = tour[i] - 1;
+            int node = tour[i];
             if (last != -1) {
                 cost_check += cost_graph[last][node].weight;
             }
@@ -1245,7 +1247,7 @@ void solver::processBestTour()
         best_cost_temp = INT_MAX;
 
         for (int i = 0; i <= instance_size; i++)
-            localBestTour[i] = lkh_best_tour[i]; // Copy the lkh tour
+            localBestTour[i] = lkh_best_tour[i] - 1; // Copy the lkh tour (shift by 1 to convert from 1-indexed to 0-indexed)
 
         std::cout << "[processBestTour] Processing Best Tour with cost: " << total_cost << std::endl;
         numberOfTimesLKHPathProcessed++;
@@ -1255,15 +1257,15 @@ void solver::processBestTour()
 
         cout << "LKH Best Tour: ";
         for (int i = 0; i <= instance_size; i++)
-            cout << localBestTour[i] - 1 << " ";
+            cout << localBestTour[i] << " ";
         cout << endl;
 
-        // Ensure the tour starts from node 1
-        rotateTourToStartFromNode1(localBestTour, instance_size);
+        // Ensure the tour starts from node 0
+        rotateTourToStartFromNode0(localBestTour, instance_size);
 
         cout << "Rotated Tour: ";
         for (int i = 0; i <= instance_size; i++)
-            cout << localBestTour[i] - 1 << " ";
+            cout << localBestTour[i] << " ";
         cout << endl;
 
         int safety_cost_check_total = 0;
@@ -1271,8 +1273,8 @@ void solver::processBestTour()
         for (int i = 0; i < instance_size_global - 1; i++)
         {
             // std::cout << "total cost" << total_cost << std::endl;
-            int src = localBestTour[i] - 1;
-            int dst = localBestTour[(i + 1)] - 1;
+            int src = localBestTour[i];
+            int dst = localBestTour[(i + 1)];
             // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
             if (cost_graph[src][dst].weight < 0) {
                 cout << "best tour index " << i << " had negative cost between node " << src << " and " << dst << endl;
@@ -1307,8 +1309,8 @@ void solver::processBestTour()
 
         for (int i = 1; i < instance_size - 1 && total_cost == best_cost; i++) // Iterate through the path
         {
-            int src = localBestTour[i - 1] - 1;
-            int dst = localBestTour[i] - 1;
+            int src = localBestTour[i - 1];
+            int dst = localBestTour[i];
 
             // Update the key for the current prefix path
             bit_vector[dst] = true; // Mark the current node as visited in the bitset
@@ -1340,8 +1342,8 @@ void solver::processBestTour()
             /* Original: process LKH subpaths as prefixes into prefix history table */
             if (depth >= 4 && ((enable_process_lkh_best_tour && enable_process_lkh_subpaths) || enable_manual_match_check)) {
                 boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
-                int node0 = localBestTour[0] - 1;
-                int node1 = localBestTour[1] - 1;
+                int node0 = localBestTour[0];
+                int node1 = localBestTour[1];
                 int incomplete_subpath_cost = prefix_cost - cost_graph[node0][node1].weight; // subpath cost not including node 0
                 boost::dynamic_bitset<> missing_deps(instance_size, false);
                 int missing_deps_count = 0;
@@ -1349,8 +1351,8 @@ void solver::processBestTour()
                 for (int shift = 1; shift <= instance_size - depth; shift++) {
                     // Remove the previous front node to shift right
                     int prev_shift = shift - 1;
-                    int prev_start = localBestTour[prev_shift + 1] - 1;
-                    int start = localBestTour[shift + 1] - 1;
+                    int prev_start = localBestTour[prev_shift + 1];
+                    int start = localBestTour[shift + 1];
                     subpath_bit_vector[prev_start] = 0;
                     incomplete_subpath_cost -= cost_graph[prev_start][start].weight;
 
@@ -1369,8 +1371,8 @@ void solver::processBestTour()
 
 
                     // Add the new back node to shift right
-                    int prev_end = localBestTour[prev_shift + depth - 1] - 1;
-                    int end = localBestTour[shift + depth - 1] - 1;
+                    int prev_end = localBestTour[prev_shift + depth - 1];
+                    int end = localBestTour[shift + depth - 1];
                     subpath_bit_vector[end] = 1;
                     incomplete_subpath_cost += cost_graph[prev_end][end].weight;
 
@@ -1432,21 +1434,21 @@ void solver::processBestTour()
 
             /* Process LKH subpaths into subpath history table */
 
-            if (depth >= 4 && ((enable_process_lkh_best_tour && enable_process_lkh_subpaths) || enable_manual_match_check)) {
+            if (depth >= 4 && enable_subpath_history_table && enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
                 boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
                 int subpath_cost = prefix_cost;
                 
                 for (int shift = 1; shift <= instance_size - depth; shift++) {
                     // Remove the previous front node to shift right
                     int prev_shift = shift - 1;
-                    int prev_start = localBestTour[prev_shift] - 1;
-                    int start = localBestTour[shift] - 1;
+                    int prev_start = localBestTour[prev_shift];
+                    int start = localBestTour[shift];
                     subpath_bit_vector[prev_start] = 0;
                     subpath_cost -= cost_graph[prev_start][start].weight;
 
                     // Add the new back node to shift right
-                    int prev_end = localBestTour[prev_shift + depth - 1] - 1;
-                    int end = localBestTour[shift + depth - 1] - 1;
+                    int prev_end = localBestTour[prev_shift + depth - 1];
+                    int end = localBestTour[shift + depth - 1];
                     subpath_bit_vector[end] = 1;
                     subpath_cost += cost_graph[prev_end][end].weight;
 
@@ -1824,72 +1826,78 @@ void solver::enumerate()
                 //     new_subpaths.push_back(subpath);
                 // }
 
-                boost::dynamic_bitset<> subpath_bit_vector(instance_size, false);
-                subpath_bit_vector[taken_node] = true;
-                int subpath_cost = 0;
-                bool pruned = false;
-                for (int length = 2; length < problem_state.current_path.size(); length++) {
-                    int src = problem_state.current_path[problem_state.current_path.size() - length];
-                    int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
-                    subpath_bit_vector[src] = true;
-                    subpath_cost += cost_graph[src][dst].weight;
-                    if (length < 4) continue;
+                /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
+                if (enable_subpath_history_table) {
+                    boost::dynamic_bitset<> subpath_bit_vector(instance_size, false);
+                    subpath_bit_vector[taken_node] = true;
+                    int subpath_cost = 0;
+                    bool pruned = false;
+                    
+                    for (int length = 2; length < problem_state.current_path.size(); length++) {
+                        int src = problem_state.current_path[problem_state.current_path.size() - length];
+                        int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
+                        subpath_bit_vector[src] = true;
+                        subpath_cost += cost_graph[src][dst].weight;
+                        if (length < 4) continue;
 
-                    SubpathKey key = {
-                        .bit_vector = subpath_bit_vector,
-                        .first_node = src,
-                        .last_node = taken_node
-                    };
-                    SubpathHistoryNode *history_node = history_table.retrieve_subpath(key, length);
-                    if (history_node == NULL) {
-                        if (!limit_insertion) {
-                            if (history_table.get_current_size() < mem_limit * history_table.get_max_size()) {
-                                history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                            } else if (number_of_groups == 1) {
-                                history_table.free_subtable_memory(&mem_limit);
-                                std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-                                limit_insertion = true;
-                            } else {
-                                if (!is_all_table_blocked)
-                                {
-                                    if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
-                                        history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                }
-                                else
-                                {
-                                    if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
+                        SubpathKey key = {
+                            .bit_vector = subpath_bit_vector,
+                            .first_node = src,
+                            .last_node = taken_node
+                        };
+                        SubpathHistoryNode *history_node = history_table.retrieve_subpath(key, length);
+                        if (history_node == NULL) {
+                            /* Subpath not in history table - add to history table */
+                            if (!limit_insertion) {
+                                if (history_table.get_current_size() < mem_limit * history_table.get_max_size()) {
+                                    history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                } else if (number_of_groups == 1) {
+                                    history_table.free_subtable_memory(&mem_limit);
+                                    std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+                                    limit_insertion = true;
+                                } else {
+                                    if (!is_all_table_blocked)
                                     {
-                                        bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
-                                        if (is_space_increased_or_available)
-                                        {
-                                            if (problem_state.current_path.size() <= bucket_size)
-                                                history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                        }
-                                        else
-                                        {
-                                            cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-                                            limit_insertion = true;
-                                        }
+                                        if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
+                                            history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
                                     }
                                     else
-                                        history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                    {
+                                        if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
+                                        {
+                                            bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
+                                            if (is_space_increased_or_available)
+                                            {
+                                                if (problem_state.current_path.size() <= bucket_size)
+                                                    history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                            }
+                                            else
+                                            {
+                                                cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+                                                limit_insertion = true;
+                                            }
+                                        }
+                                        else
+                                            history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
+                                    }
                                 }
                             }
-                        }
-                    } else {
-                        if (subpath_cost > history_node->subpath_cost) {
-                            pruned_count++;
-                            prune(source_node, taken_node, edge_weight);
-                            pruned = true;
-                            log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
-                            break;
                         } else {
-                            history_node->subpath_cost = subpath_cost;
+                            if (subpath_cost > history_node->subpath_cost) {
+                                /* Better subpath found in history table, prune */
+                                pruned_count++;
+                                prune(source_node, taken_node, edge_weight);
+                                pruned = true;
+                                log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
+                                break;
+                            } else {
+                                /* This subpath is better than the one in history table, so update history table */
+                                history_node->subpath_cost = subpath_cost;
+                            }
                         }
                     }
+                    if (pruned) continue;
                 }
-                if (pruned) continue;
-
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);

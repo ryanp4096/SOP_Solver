@@ -105,6 +105,7 @@ private:
     vector<vector<Memory_Module>> memory_allocators; // a memory allocator for each thread, in order to reduce synchronization overhead
 
     vector<SubpathMap> subpath_maps;
+    bool enable_subpath_history_table;
 
     unsigned long total_ram = 0;        // the total amount of memory in the system, in bytes
     unsigned long max_size = 0;         // the maximum allowed size of the history table, in bytes
@@ -127,7 +128,7 @@ public:
     /* Initialize the history table memory module (in parallel solver sets up one for each thread).
         thread_count -  the number of threads alloted to B&B enumeration
         node_count - the number of nodes in the cost graph */
-    void initialize(int thread_count, size_t size, int number_of_groups, int group_size);
+    void initialize(int thread_count, size_t size, int number_of_groups, int group_size, bool enable_subpath_history_table = true);
     /* Returns the max allowed size of the history table, in bytes. */
     size_t get_max_size();
     /* Returns the current size of the history table, in bytes. */

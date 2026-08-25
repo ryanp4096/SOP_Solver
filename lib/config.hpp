@@ -63,6 +63,9 @@ struct Config {
     /* Enable diagnostic to manually check if each node matches an LKH prefix/subpath */
     bool enable_manual_match_check = false;
 
+    /* Enable separate history table for subpaths */
+    bool enable_subpath_history_table = false;
+
     /* UNUSED */
 
     int assign_workload_level = 150;
