@@ -12,9 +12,7 @@ std::condition_variable cv;
 
 template <typename T>
 MemoryAllocator<T>::~MemoryAllocator() {
-    for (T *b : blocks) {
-        delete[] b;
-    }
+    free_all();
 }
 template <typename T>
 T *MemoryAllocator<T>::allocate() {
@@ -28,46 +26,53 @@ T *MemoryAllocator<T>::allocate() {
     }
 }
 
-Memory_Module::Memory_Module()
-{
-    bucket_block = new Bucket[BUCKET_BLK_SIZE];
-    history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-    bucket_counter = 0;
-    his_node_counter = 0;
-}
-Memory_Module::~Memory_Module()
-{
-    // cout << "destructor triggered\n";
-    delete[] bucket_block; // Use delete[] to free the array of Buckets
-    free(history_block);   // Use free to deallocate memory allocated with malloc
-}
-
-Bucket *Memory_Module::get_bucket()
-{
-    if (bucket_counter >= BUCKET_BLK_SIZE || bucket_block == NULL)
-    {
-        bucket_block = new Bucket[BUCKET_BLK_SIZE];
-        bucket_counter = 0;
+template<typename T>
+void MemoryAllocator<T>::free_all() {
+    for (T *b : blocks) {
+        delete[] b;
     }
-    Bucket *bucket = bucket_block + bucket_counter;
-    bucket_counter++;
-    return bucket;
 }
 
-HistoryNode *Memory_Module::retrieve_his_node()
-{
-    // HistoryNode* node = NULL;
+// Memory_Module::Memory_Module()
+// {
+//     bucket_block = new Bucket[BUCKET_BLK_SIZE];
+//     history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
+//     bucket_counter = 0;
+//     his_node_counter = 0;
+// }
+// Memory_Module::~Memory_Module()
+// {
+//     // cout << "destructor triggered\n";
+//     delete[] bucket_block; // Use delete[] to free the array of Buckets
+//     free(history_block);   // Use free to deallocate memory allocated with malloc
+// }
 
-    if (his_node_counter >= HIS_BLK_SIZE || history_block == NULL)
-    {
-        history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-        his_node_counter = 0;
-    }
-    HistoryNode *node = history_block + his_node_counter;
-    his_node_counter++;
+// Bucket *Memory_Module::get_bucket()
+// {
+//     if (bucket_counter >= BUCKET_BLK_SIZE || bucket_block == NULL)
+//     {
+//         bucket_block = new Bucket[BUCKET_BLK_SIZE];
+//         bucket_counter = 0;
+//     }
+//     Bucket *bucket = bucket_block + bucket_counter;
+//     bucket_counter++;
+//     return bucket;
+// }
 
-    return node;
-}
+// HistoryNode *Memory_Module::retrieve_his_node()
+// {
+//     // HistoryNode* node = NULL;
+
+//     if (his_node_counter >= HIS_BLK_SIZE || history_block == NULL)
+//     {
+//         history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
+//         his_node_counter = 0;
+//     }
+//     HistoryNode *node = history_block + his_node_counter;
+//     his_node_counter++;
+
+//     return node;
+// }
 
 History_Table::History_Table(size_t size)
 {
@@ -99,10 +104,7 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
     groups_size = group_size;
     block_count.resize(number_of_groups, 0);
 
-    map.resize(number_of_groups);
-    memory_allocators.resize(number_of_groups);
-
-    table_lock.resize(number_of_groups);
+    prefix_maps.resize(number_of_groups);
 
     if (enable_subpath_history_table) {
         subpath_maps.resize(number_of_groups);
@@ -115,10 +117,9 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
 
     for (int i = 0; i < number_of_groups; i++)
     {
-        map[i].resize(size);
-        memory_allocators[i].resize(thread_num);
-
-        table_lock[i] = vector<spin_lock>(size / COVER_AREA + 1);
+        prefix_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<PrefixEntry>(BUCKET_BLK_SIZE));
+        prefix_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
+        prefix_maps[i].buckets = vector<atomic<PrefixEntry *>>(size);
 
         if (enable_subpath_history_table) {
             subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
@@ -153,24 +154,10 @@ HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bo
 {
     int group_index = get_bucket_index(depth);
 
-    // if (num_of_groups > 1 && depth <= num_of_groups * groups_size)
-    //     group_index = std::ceil(static_cast<double>(depth) / groups_size) - 1;
-    // else
-    //     group_index = num_of_groups - 1;
-
-    // int index;
-    // if (depth <= 3 * temp_group_size)
-    //     index = std::ceil(static_cast<double>(depth) / temp_group_size) - 1;
-    // else
-    //     index = 3 - 1;
-
     if (blocked_groups[group_index])
-    {
-        // block_count[group_index]++;
         return NULL;
-    }
-
-    HistoryNode *node = memory_allocators[group_index][thread_id].retrieve_his_node();
+    
+    PrefixMap &map = prefix_maps[group_index];
 
     if (thread_id % 4 == 0)
     {
@@ -182,38 +169,31 @@ HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bo
         }
     }
 
-    if (node == NULL)
-        return NULL;
-
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
-    int bucket = (val + key.last_node) % num_buckets;
+    int bucket = (val + key.last_node * 1217) % num_buckets;
 
-    node->explored = backtracked;
-    node->entry.store({prefix_cost, lower_bound});
-    node->active_threadID = thread_id;
-    node->is_best_suffix = is_best_suffix;
-    // node->level = index;
-    // node->depth = depth;
-    // node->usage_cnt = 0;
-
-    table_lock[group_index][bucket / COVER_AREA].lock();
+    spin_lock &lock = map.locks[bucket / COVER_AREA];
+    lock.lock();
     if (!is_data_available[group_index] || blocked_groups[group_index])
     {
         block_count[group_index]++;
-        table_lock[group_index][bucket / COVER_AREA].unlock();
+        lock.unlock();
         return NULL;
     }
-    if (map[group_index][bucket] == NULL)
-    {
-        map[group_index][bucket] = memory_allocators[group_index][thread_id].get_bucket();
-        map[group_index][bucket]->push_back(make_pair(key, node));
-        table_lock[group_index][bucket / COVER_AREA].unlock();
-        return node;
-    }
 
-    map[group_index][bucket]->push_back(make_pair(key, node));
-    table_lock[group_index][bucket / COVER_AREA].unlock();
-    return node;
+    PrefixEntry *entry = map.bucket_allocators[thread_id].allocate();
+    if (entry == NULL)
+        return NULL;
+    
+    entry->key = key;
+    entry->node.explored = backtracked;
+    entry->node.entry.store({prefix_cost, lower_bound});
+    entry->node.active_threadID = thread_id;
+    entry->node.is_best_suffix = is_best_suffix;
+    entry->next = map.buckets[bucket];
+    map.buckets[bucket] = entry;
+    lock.unlock();
+    return &entry->node;
 }
 
 HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
@@ -226,39 +206,34 @@ HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
         return NULL;
 
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
-    int bucket = (val + key.last_node) % num_buckets;
+    int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
-    table_lock[group_index][bucket / COVER_AREA].lock();
-    if (map[group_index][bucket] == NULL)
-    {
-        table_lock[group_index][bucket / COVER_AREA].unlock();
+    PrefixMap &map = prefix_maps[group_index];
+
+    PrefixEntry *bucket = map.buckets[bucket_index];
+    if (bucket == NULL) {
         return NULL;
-    }
-    else if (map[group_index][bucket]->size() == 1)
-    {
-        if (key.last_node == map[group_index][bucket]->begin()->first.last_node && key.bit_vector == map[group_index][bucket]->begin()->first.bit_vector)
-        {
-            // map[group_index][bucket]->begin()->second->referred = true;
-            table_lock[group_index][bucket / COVER_AREA].unlock();
-            return map[group_index][bucket]->begin()->second;
-        }
-        else
-        {
-            table_lock[group_index][bucket / COVER_AREA].unlock();
+
+    } else if (bucket->next == NULL) {
+        if (
+            key.last_node == bucket->key.last_node &&
+            key.bit_vector == bucket->key.bit_vector
+        ) {
+            return &bucket->node;
+        } else {
             return NULL;
         }
+
     }
     if (is_data_available[group_index])
-        for (auto iter = map[group_index][bucket]->begin(); iter != map[group_index][bucket]->end(); iter++)
-        {
-            if (key.last_node == iter->first.last_node && key.bit_vector == iter->first.bit_vector)
-            {
-                // iter->second->referred = true;
-                table_lock[group_index][bucket / COVER_AREA].unlock();
-                return iter->second;
+        for (PrefixEntry *entry = bucket; entry != NULL; entry = entry->next) {
+            if (
+                key.last_node == entry->key.last_node &&
+                key.bit_vector == entry->key.bit_vector
+            ) {
+                return &entry->node;
             }
         }
-    table_lock[group_index][bucket / COVER_AREA].unlock();
 
     return NULL;
 }
@@ -355,7 +330,7 @@ bool History_Table::check_and_manage_memory(int depth, float *updated_mem_limit,
 {
     int group_index = get_bucket_index(depth);
 
-    for (int i = memory_allocators.size() - 1; i > 0; --i)
+    for (int i = prefix_maps.size() - 1; i > 0; --i)
     {
         current_size = total_ram - get_free_mem();
         // cout << "attempted to block the group :" << group_index << "\n";
@@ -408,7 +383,7 @@ bool History_Table::free_subtable_memory(float *mem_limit)
 {
     std::unique_lock<std::mutex> lock(mtx); // Lock for the entire function to synchronize threads
 
-    for (int i = memory_allocators.size() - 1; i >= 0; --i)
+    for (int i = prefix_maps.size() - 1; i >= 0; --i)
     {
         // Wait until no thread is working
         cv.wait(lock, []
@@ -466,10 +441,10 @@ bool History_Table::free_subtable_memory(float *mem_limit)
 
                 std::cout << "current used size before (in bytes): " << current_size / 1048576 << " MB" << std::endl;
 
-                for (auto &allocator : memory_allocators[i])
+                for (MemoryAllocator<PrefixEntry> &allocator : prefix_maps[i].bucket_allocators)
                 {
+                    allocator.free_all();
                 }
-                memory_allocators[i].clear(); // Clear the vector, effectively freeing memory
 
                 std::cout << "Freed memory for subtable: " << i + 1 << std::endl;
 
@@ -506,15 +481,15 @@ void History_Table::track_entries_and_references()
         total_references = 0;
 
         if (num_of_groups == 1 || is_data_available[i])
-            for (Bucket *bucket : map[i])
+            for (PrefixEntry *bucket : prefix_maps[i].buckets)
             {
                 if (!bucket)
                     continue; // Skip if the bucket pointer is NULL
 
                 // Iterate over each Entry in the bucket
-                for (auto &entry : *bucket)
+                for (PrefixEntry *entry = bucket; entry != NULL; entry = entry->next)
                 {
-                    HistoryNode *history_node = entry.second;
+                    HistoryNode *history_node = &entry->node;
 
                     // Check if history_node is not nullptr before accessing its members
                     if (!history_node)

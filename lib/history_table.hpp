@@ -17,8 +17,13 @@
 #define FREED_SIZE 100000000
 #define COVER_AREA 10
 
-typedef pair<PrefixKey, HistoryNode *> Entry;         // a single entry in the history table
-typedef list<Entry> Bucket;                     // a bucket of
+// typedef pair<PrefixKey, HistoryNode *> Entry;         // a single entry in the history table
+// typedef list<Entry> Bucket;                     // a bucket of
+struct PrefixEntry {
+    PrefixKey key;
+    HistoryNode node;
+    PrefixEntry *next;
+};
 
 /**
  * Allocates memory for a given type. Used when frequently allocating memory for a given type to prevent high number of memory allocations, by allocating one large block of memory at a time.
@@ -37,6 +42,8 @@ public:
      * Allocate memory to store type T
      */
     T *allocate();
+
+    void free_all();
 };
 
 struct SubpathEntry {
@@ -50,27 +57,32 @@ struct SubpathMap {
     vector<spin_lock> locks;
     vector<MemoryAllocator<SubpathEntry>> bucket_allocators;
 };
-
-
-/* Manages memory allocation for the history table in blocks in order to reduce system call overhead. */
-class Memory_Module
-{
-private:
-    Bucket *bucket_block = NULL;       // current block of buckets
-    unsigned bucket_counter;           // counter in the current block of buckets
-    HistoryNode *history_block = NULL; // current block of history nodes
-    unsigned his_node_counter = 0;     // counter in the current block of history nodes
-    // Recycled_Blk recycled_nodes;
-    // unsigned recycled_node_counter = 0;
-    // unsigned max_level = 0;
-public:
-    Memory_Module();
-    ~Memory_Module(); // Destructor declaration
-    Bucket *get_bucket();
-    HistoryNode *retrieve_his_node();
-    // unsigned long request_nodeMem();
-    // bool check_reserve();
+struct PrefixMap {
+    vector<atomic<PrefixEntry *>> buckets;
+    vector<spin_lock> locks;
+    vector<MemoryAllocator<PrefixEntry>> bucket_allocators;
 };
+
+
+// /* Manages memory allocation for the history table in blocks in order to reduce system call overhead. */
+// class Memory_Module
+// {
+// private:
+//     Bucket *bucket_block = NULL;       // current block of buckets
+//     unsigned bucket_counter;           // counter in the current block of buckets
+//     HistoryNode *history_block = NULL; // current block of history nodes
+//     unsigned his_node_counter = 0;     // counter in the current block of history nodes
+//     // Recycled_Blk recycled_nodes;
+//     // unsigned recycled_node_counter = 0;
+//     // unsigned max_level = 0;
+// public:
+//     Memory_Module();
+//     ~Memory_Module(); // Destructor declaration
+//     Bucket *get_bucket();
+//     HistoryNode *retrieve_his_node();
+//     // unsigned long request_nodeMem();
+//     // bool check_reserve();
+// };
 
 // struct Recycled_Blk {
 //     HistoryNode** node_block = NULL;
@@ -83,10 +95,11 @@ class History_Table
 {
 private:
     unsigned num_buckets = 0;                        // the number of buckets the history table should be stored in
-    vector<vector<Bucket *>> map;                    // the collection of history nodes
-    vector<vector<spin_lock>> table_lock;            // a read-write lock for every X adjacent buckets, defined by COVER_AREA
-    vector<vector<Memory_Module>> memory_allocators; // a memory allocator for each thread, in order to reduce synchronization overhead
+    // vector<vector<Bucket *>> map;                    // the collection of history nodes
+    // vector<vector<spin_lock>> table_lock;            // a read-write lock for every X adjacent buckets, defined by COVER_AREA
+    // vector<vector<Memory_Module>> memory_allocators; // a memory allocator for each thread, in order to reduce synchronization overhead
 
+    vector<PrefixMap> prefix_maps;
     vector<SubpathMap> subpath_maps;
     bool enable_subpath_history_table;
 

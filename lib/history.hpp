@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <mutex>
 #include <boost/dynamic_bitset.hpp>
+#include "synchronization.hpp"
 
 using namespace std;
 
@@ -50,9 +51,10 @@ struct SubpathKey
 
 struct SubpathHistoryNode
 {
-    atomic<int> subpath_cost;
-    // add on for thread stopping
+    uint32_t subpath_cost;
+	// uint32_t active_threads;
+	// bool in_best_solution;
+	// spin_lock lock;
 };
-
 
 #endif
