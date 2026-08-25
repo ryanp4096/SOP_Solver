@@ -4,8 +4,15 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <boost/dynamic_bitset.hpp>
 
 using namespace std;
+
+struct PrefixKey
+{
+	boost::dynamic_bitset<> bit_vector;
+	int last_node;
+};
 
 struct HistoryContent
 {
@@ -17,9 +24,9 @@ struct HistoryContent
 struct HistoryNode
 {
 	atomic<bool> explored;			 // if the subspace under this node has already been fully explored
-	atomic<bool> referred;			 // if the subspace under this node has already been referred
+	// atomic<bool> referred;			 // if the subspace under this node has already been referred
 	atomic<bool> is_best_suffix;
-	int level;
+	// int level;
 	atomic<uint8_t> active_threadID; // the thread that is exploring this subspace (there can only ever be one, because any others would be stopped)
 	atomic<HistoryContent> entry;
 };
@@ -33,5 +40,19 @@ struct Active_Node
 	atomic<bool> deprecated; // whether this node is still necessary to consider
 	mutex nlck;				 // lock on total and current children counts
 };
+
+struct SubpathKey
+{
+    boost::dynamic_bitset<> bit_vector;
+    int first_node;
+    int last_node;
+};
+
+struct SubpathHistoryNode
+{
+    atomic<int> subpath_cost;
+    // add on for thread stopping
+};
+
 
 #endif

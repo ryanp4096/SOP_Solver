@@ -245,8 +245,8 @@ MatchInfo check_match(sop_state& problem_state) {
         };
     
     int depth = problem_state.current_path.size();
-    boost::dynamic_bitset<> bit_vector = problem_state.history_key.first; 
-    int last_node = problem_state.history_key.second;
+    boost::dynamic_bitset<> bit_vector = problem_state.history_key.bit_vector; 
+    int last_node = problem_state.history_key.last_node;
     int cost = problem_state.current_cost;
 
     if (depth >= instance_size_global)
@@ -1015,7 +1015,7 @@ void solver::solve_parallel()
                     bit_vector[node] = true;
                 }
                 int last_element = solvers[thread_cnt].problem_state.current_path.back();
-                solvers[thread_cnt].problem_state.history_key = make_pair(bit_vector, last_element);
+                solvers[thread_cnt].problem_state.history_key = {bit_vector, last_element};
 
                 thread_cnt++;
                 origin_taken_arr[origin] = true;
@@ -1145,7 +1145,7 @@ void rotateTourToStartFromNode0(int *tour, int size)
 
     delete[] rotatedTour; // Clean up temporary array
 }
-void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, int expected_shift) {
+void checkSubpath(int *tour, PrefixKey &key, int expected_cost, int expected_depth, int expected_shift) {
     if (!enable_manual_match_check) return;
     int node_to_order[instance_size_global];
     for (int i = 0; i < instance_size_global; i++) {
@@ -1155,7 +1155,7 @@ void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, in
     int highest_index = -1;
     int last_node = -1;
     for (int i = 0; i < instance_size_global; i++) {
-        if (key.first[i]) {
+        if (key.bit_vector[i]) {
             int order = node_to_order[i];
             // cout << "N" << i << "/O" << order << " ";
             if (order > highest_index) {
@@ -1170,8 +1170,8 @@ void checkSubpath(int *tour, Key &key, int expected_cost, int expected_depth, in
         cout << "[checkSubpath] !! ERROR: missing first node" << endl;
         return;
     }
-    if (last_node != key.second) {
-        cout << "[checkSubpath] !! ERROR: last node does not match - expected " << key.second << ", calculated " << last_node << endl;
+    if (last_node != key.last_node) {
+        cout << "[checkSubpath] !! ERROR: last node does not match - expected " << key.last_node << ", calculated " << last_node << endl;
         return;
     }
     int stage = 0;
@@ -1405,7 +1405,7 @@ void solver::processBestTour()
                     }
 
                     if (enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
-                        pair<boost::dynamic_bitset<>, int> prefixKey = make_pair(subpath_bit_vector, end);
+                        PrefixKey prefixKey = {subpath_bit_vector, end};
                         HistoryNode *history_node = history_table.retrieve(prefixKey, depth);
                         if (history_node != NULL) {
                             HistoryContent content = history_node->entry.load();
@@ -1477,7 +1477,7 @@ void solver::processBestTour()
             }
 
             if (enable_process_lkh_best_tour) {
-                pair<boost::dynamic_bitset<>, int> prefixKey = make_pair(bit_vector, dst); // The second element is the last element of the prefix
+                PrefixKey prefixKey = {bit_vector, dst}; // The second element is the last element of the prefix
 
                 // Check if this key exists in the history table
                 HistoryNode *history_node = history_table.retrieve(prefixKey, i + 1); // i start from 0
@@ -1656,8 +1656,8 @@ void solver::enumerate()
                 bool taken = false;
 
                 problem_state.current_path.push_back(taken_node);
-                problem_state.history_key.first[taken_node] = true;
-                problem_state.history_key.second = taken_node;
+                problem_state.history_key.bit_vector[taken_node] = true;
+                problem_state.history_key.last_node = taken_node;
                 problem_state.current_cost += edge_weight; // Use cached value
 
                 HistoryNode *his_node = NULL;
@@ -1905,8 +1905,8 @@ void solver::enumerate()
                 ready_list.push_back(temp);
                 problem_state.current_path.pop_back();
                 problem_state.current_cost -= edge_weight; // Use cached value
-                problem_state.history_key.first[taken_node] = false;
-                problem_state.history_key.second = source_node;
+                problem_state.history_key.bit_vector[taken_node] = false;
+                problem_state.history_key.last_node = source_node;
             }
         }
         trace.write_end_list();
@@ -1972,8 +1972,8 @@ void solver::enumerate()
             for (int vertex : dependencies)
                 problem_state.depCnt[vertex]--;
 
-            problem_state.history_key.first[taken_node] = true;
-            problem_state.history_key.second = taken_node;
+            problem_state.history_key.bit_vector[taken_node] = true;
+            problem_state.history_key.last_node = taken_node;
             problem_state.hungarian_solver.fix_row(src, taken_node);
             problem_state.hungarian_solver.fix_column(taken_node, src);
             // HistoryNode *previous_hisnode = current_hisnode;
@@ -1991,8 +1991,8 @@ void solver::enumerate()
             // current_hisnode = previous_hisnode;
             problem_state.hungarian_solver.undue_row(src, taken_node);
             problem_state.hungarian_solver.undue_column(taken_node, src);
-            problem_state.history_key.first[taken_node] = false;
-            problem_state.history_key.second = src;
+            problem_state.history_key.bit_vector[taken_node] = false;
+            problem_state.history_key.last_node = src;
             for (int vertex : dependencies) // Reuse cached dependency list
                 problem_state.depCnt[vertex]++;
             problem_state.current_cost -= cost_graph[src][taken_node].weight;
@@ -2429,8 +2429,8 @@ void solver::prune(int source_node, int taken_node, int edge_weight)
 {
     problem_state.current_path.pop_back();               // Undo temporary path addition
     problem_state.current_cost -= edge_weight;           // Undo temporary cost addition
-    problem_state.history_key.first[taken_node] = false; // Undo temporary history key
-    problem_state.history_key.second = source_node;      // Undo temporary history key
+    problem_state.history_key.bit_vector[taken_node] = false; // Undo temporary history key
+    problem_state.history_key.last_node = source_node;      // Undo temporary history key
 }
 
 int solver::dynamic_hungarian(int src, int dst)
@@ -2445,7 +2445,7 @@ int solver::dynamic_hungarian(int src, int dst)
     return lb;
 }
 
-bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
+bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
 {
     HistoryNode *history_node = history_table.retrieve(key, problem_state.current_path.size());
 
@@ -2505,7 +2505,7 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
                 {
                     thread_stop_requested++;
                     thread_requests[target_ID].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
-                                                                        content.prefix_cost, target_ID, key.first);
+                                                                        content.prefix_cost, target_ID, key.bit_vector);
                     thread_requests[target_ID].has_request = true;
                 }
                 thread_requests[target_ID].lock.unlock();
@@ -2571,7 +2571,7 @@ bool solver::history_utilization(Key &key, int cost, int *lowerbound, bool *foun
  * @param entry Pointer to the history node entry; updated if an existing entry is found.
  * @param backtracked Boolean indicating if the path has been backtracked.
  */
-void solver::push_to_history_table(Key &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost)
+void solver::push_to_history_table(PrefixKey &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost)
 {
     if (entry == NULL)
         history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
@@ -2713,7 +2713,7 @@ sop_state solver::generate_solver_state(path_node &subproblem)
         bit_vector[node] = true;
     }
     int last_element = state.current_path.back();
-    state.history_key = make_pair(bit_vector, last_element);
+    state.history_key = {bit_vector, last_element};
 
     // cur_active_tree.generate_path(sequence_node.partial_active_path);
     // cur_active_tree.set_threadID(thread_id, thread_total);
@@ -2751,8 +2751,8 @@ void solver::print_state(sop_state &state)
     std::cout << "Origin: " << state.origin_node << std::endl;
     std::cout << "Key: ";
     for (int i = 0; i < instance_size; i++)
-        std::cout << state.history_key.first[i] << " ";
-    std::cout << " -- " << state.history_key.second << std::endl;
+        std::cout << state.history_key.bit_vector[i] << " ";
+    std::cout << " -- " << state.history_key.last_node << std::endl;
     std::cout << "Taken: ";
     for (int i = 0; i < (int)state.taken_arr.size(); i++)
         std::cout << state.taken_arr[i] << " ";
@@ -2763,7 +2763,7 @@ void solver::print_state(sop_state &state)
     std::cout << std::endl;
 }
 
-bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_key, vector<int> sequence, bool *prefixKeyMatched)
+bool solver::check_stop_request(PrefixKey history_key, vector<int> sequence, bool *prefixKeyMatched)
 {
     if (thread_requests[thread_id].has_request)
     {
@@ -2778,7 +2778,7 @@ bool solver::check_stop_request(std::pair<boost::dynamic_bitset<>, int> history_
                 if (rp.target_last_node == sequence[rp.target_depth - 1])
                 {
                     thread_stop_check++;
-                    if (rp.key == history_key.first) // will only occur when the size of the target_depth and sequence size is same
+                    if (rp.key == history_key.bit_vector) // will only occur when the size of the target_depth and sequence size is same
                     {
                         int current_cost = problem_state.current_cost;
                         if (current_cost >= rp.target_prefix_cost) {

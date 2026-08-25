@@ -149,7 +149,7 @@ void History_Table::print_curmem()
     return;
 }
 
-HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix)
+HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix)
 {
     int group_index = get_bucket_index(depth);
 
@@ -185,8 +185,8 @@ HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, u
     if (node == NULL)
         return NULL;
 
-    size_t val = hash<boost::dynamic_bitset<>>{}(key.first);
-    int bucket = (val + key.second) % num_buckets;
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket = (val + key.last_node) % num_buckets;
 
     node->explored = backtracked;
     node->entry.store({prefix_cost, lower_bound});
@@ -216,7 +216,7 @@ HistoryNode *History_Table::insert(Key &key, int prefix_cost, int lower_bound, u
     return node;
 }
 
-HistoryNode *History_Table::retrieve(Key &key, int depth)
+HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
 {
     if (depth < gp_depth)
         return NULL;
@@ -225,8 +225,8 @@ HistoryNode *History_Table::retrieve(Key &key, int depth)
     if (!is_data_available[group_index])
         return NULL;
 
-    size_t val = hash<boost::dynamic_bitset<>>{}(key.first);
-    int bucket = (val + key.second) % num_buckets;
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket = (val + key.last_node) % num_buckets;
 
     table_lock[group_index][bucket / COVER_AREA].lock();
     if (map[group_index][bucket] == NULL)
@@ -236,9 +236,9 @@ HistoryNode *History_Table::retrieve(Key &key, int depth)
     }
     else if (map[group_index][bucket]->size() == 1)
     {
-        if (key.second == map[group_index][bucket]->begin()->first.second && key.first == map[group_index][bucket]->begin()->first.first)
+        if (key.last_node == map[group_index][bucket]->begin()->first.last_node && key.bit_vector == map[group_index][bucket]->begin()->first.bit_vector)
         {
-            map[group_index][bucket]->begin()->second->referred = true;
+            // map[group_index][bucket]->begin()->second->referred = true;
             table_lock[group_index][bucket / COVER_AREA].unlock();
             return map[group_index][bucket]->begin()->second;
         }
@@ -251,9 +251,9 @@ HistoryNode *History_Table::retrieve(Key &key, int depth)
     if (is_data_available[group_index])
         for (auto iter = map[group_index][bucket]->begin(); iter != map[group_index][bucket]->end(); iter++)
         {
-            if (key.second == iter->first.second && key.first == iter->first.first)
+            if (key.last_node == iter->first.last_node && key.bit_vector == iter->first.bit_vector)
             {
-                iter->second->referred = true;
+                // iter->second->referred = true;
                 table_lock[group_index][bucket / COVER_AREA].unlock();
                 return iter->second;
             }
@@ -520,13 +520,13 @@ void History_Table::track_entries_and_references()
                     if (!history_node)
                         continue;
 
-                    int index = history_node->level;
-                    if (index > 2)
-                        cout << "incorrect index";
+                    // int index = history_node->level;
+                    // if (index > 2)
+                    //     cout << "incorrect index";
 
-                    total_entries_single_table[index]++;
-                    if (history_node->referred)
-                        total_references_single_table[index]++;
+                    // total_entries_single_table[index]++;
+                    // if (history_node->referred)
+                    //     total_references_single_table[index]++;
                 }
             }
     }

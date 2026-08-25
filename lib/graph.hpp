@@ -5,6 +5,7 @@
 
 #include <boost/container/vector.hpp>
 #include <boost/dynamic_bitset.hpp>
+#include "history.hpp"
 
 #include <vector>
 
@@ -49,7 +50,7 @@ public:
     // bool* invalid_ptr = NULL; //investigate
     // bool deprecated = false; //For Thread Stopping. if this node exists in a redundant subspace and so does not need to be processed
     unsigned long long current_node_value = -1; // the portion out of ULLONG_MAX of the working tree that is under this node
-    std::pair<boost::dynamic_bitset<>, int> history_key;
+    PrefixKey history_key;
     // std::vector<Subpath> subpaths;
     
 
@@ -65,7 +66,7 @@ public:
         origin_node = origin;
     }
 
-    path_node(std::vector<int> partial_path, int lb, int origin, std::pair<boost::dynamic_bitset<>, int> key)
+    path_node(std::vector<int> partial_path, int lb, int origin, PrefixKey key)
     {
         sequence = partial_path;
         lower_bound = lb;

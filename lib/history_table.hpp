@@ -17,8 +17,7 @@
 #define FREED_SIZE 100000000
 #define COVER_AREA 10
 
-typedef pair<boost::dynamic_bitset<>, int> Key; // a key to the history table
-typedef pair<Key, HistoryNode *> Entry;         // a single entry in the history table
+typedef pair<PrefixKey, HistoryNode *> Entry;         // a single entry in the history table
 typedef list<Entry> Bucket;                     // a bucket of
 
 /**
@@ -40,28 +39,12 @@ public:
     T *allocate();
 };
 
-struct Subpath {
-    boost::dynamic_bitset<> bit_vector;
-    int first_node;
-    int last_node;
-    int depth;
-    int cost;
-};
-struct SubpathKey {
-    boost::dynamic_bitset<> bit_vector;
-    int first_node;
-    int last_node;
-};
-struct SubpathHistoryNode {
-    atomic<int> subpath_cost;
-    // add on for thread stopping
-};
 struct SubpathEntry {
     SubpathKey key;
     SubpathHistoryNode node;
     SubpathEntry *next;
 };
-// typedef list<SubpathEntry> SubpathBucket;
+
 struct SubpathMap {
     vector<atomic<SubpathEntry *>> buckets;
     vector<spin_lock> locks;
@@ -148,11 +131,11 @@ public:
         backtracked - whether the subspace under this node has already been explored
         depth - the depth of this node (size of the current partial path)
         Return- a pointer to the node created */
-    HistoryNode *insert(Key &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix);
+    HistoryNode *insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix);
     /* Find a history table entry based on a specific key.
         key - the history key corresponding to the partial path this entry represents
         Return- a pointer to the node found, if any */
-    HistoryNode *retrieve(Key &key, int depth);
+    HistoryNode *retrieve(PrefixKey &key, int depth);
 
     SubpathHistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
     SubpathHistoryNode *retrieve_subpath(SubpathKey &key, int depth);
