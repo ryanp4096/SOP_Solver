@@ -1337,6 +1337,7 @@ void solver::processBestTour()
                 lkh_subpath_cost_by_depth[depth] = vector<int>();
             }
 
+            /* Original: process LKH subpaths as prefixes into prefix history table */
             if (depth >= 4 && ((enable_process_lkh_best_tour && enable_process_lkh_subpaths) || enable_manual_match_check)) {
                 boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
                 int node0 = localBestTour[0] - 1;
@@ -1385,13 +1386,13 @@ void solver::processBestTour()
 
                     int node0_cost = cost_graph[node0][start].weight;
                     if (node0_cost < 0) {
-                        cout << "[processBestTour] Subpath has negative node 0 to subpath cost - depth " << depth << " shift " << shift << endl;
+                        cout << "[processBestTour] Subpath as Prefix has negative node 0 to subpath cost - depth " << depth << " shift " << shift << endl;
                         continue;
                     }
                     int subpath_cost = node0_cost + incomplete_subpath_cost;
 
                     if (missing_deps_count != 0) {
-                        if (enable_manual_match_check) cout << "[processBestTour] Subpath Missing Dependencies - depth " << depth << " shift " << shift << " (" << missing_deps_count << " nodes missing dependencies)" << endl;
+                        if (enable_manual_match_check) cout << "[processBestTour] Subpath Missing Dependencies as Prefix - depth " << depth << " shift " << shift << " (" << missing_deps_count << " nodes missing dependencies)" << endl;
                         continue;
                     }
 
@@ -1413,16 +1414,60 @@ void solver::processBestTour()
                                 history_node->entry.store(content);
                                 bool is_best_suffix = lkh_suffix_cost == content.lower_bound - content.prefix_cost;
                                 history_node->is_best_suffix = is_best_suffix;
-                                std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << shift << " (entry: " << old_prefix_cost << ", lkh: " << subpath_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
+                                std::cout << "[processBestTour] Subpath Updated as Prefix - depth " << depth << " shift " << shift << " (entry: " << old_prefix_cost << ", lkh: " << subpath_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
                                 checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
                             } else {
-                                std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << shift << " (entry: " << content.prefix_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                                std::cout << "[processBestTour] Subpath Ignored as Prefix - depth " << depth << " shift " << shift << " (entry: " << content.prefix_cost << ", lkh: " << subpath_cost << ")" << std::endl;
                                 checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
                             }
                         } else {
                             push_to_history_table(prefixKey, -1, &history_node, false, false, depth, subpath_cost);
-                            std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
+                            std::cout << "[processBestTour] Subpath Added as Prefix - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                             checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
+                        }
+                    }
+
+                }
+            }
+
+            /* Process LKH subpaths into subpath history table */
+
+            if (depth >= 4 && ((enable_process_lkh_best_tour && enable_process_lkh_subpaths) || enable_manual_match_check)) {
+                boost::dynamic_bitset<> subpath_bit_vector = bit_vector;
+                int subpath_cost = prefix_cost;
+                
+                for (int shift = 1; shift <= instance_size - depth; shift++) {
+                    // Remove the previous front node to shift right
+                    int prev_shift = shift - 1;
+                    int prev_start = localBestTour[prev_shift] - 1;
+                    int start = localBestTour[shift] - 1;
+                    subpath_bit_vector[prev_start] = 0;
+                    subpath_cost -= cost_graph[prev_start][start].weight;
+
+                    // Add the new back node to shift right
+                    int prev_end = localBestTour[prev_shift + depth - 1] - 1;
+                    int end = localBestTour[shift + depth - 1] - 1;
+                    subpath_bit_vector[end] = 1;
+                    subpath_cost += cost_graph[prev_end][end].weight;
+
+                    if (enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
+                        SubpathKey subpathKey = {
+                            .bit_vector = subpath_bit_vector,
+                            .first_node = start,
+                            .last_node = end
+                        };
+                        SubpathHistoryNode *history_node = history_table.retrieve_subpath(subpathKey, depth);
+                        if (history_node != NULL) {
+                            int old_subpath_cost = history_node->subpath_cost;
+                            if (subpath_cost < old_subpath_cost) {
+                                history_node->subpath_cost = subpath_cost;
+                                std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                            } else {
+                                std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                            }
+                        } else {
+                            history_table.insert_subpath(subpathKey, subpath_cost, thread_id, depth);
+                            std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                         }
                     }
 
@@ -1795,7 +1840,7 @@ void solver::enumerate()
                         .first_node = src,
                         .last_node = taken_node
                     };
-                    HistoryNode *history_node = history_table.retrieve_subpath(key, length);
+                    SubpathHistoryNode *history_node = history_table.retrieve_subpath(key, length);
                     if (history_node == NULL) {
                         if (!limit_insertion) {
                             if (history_table.get_current_size() < mem_limit * history_table.get_max_size()) {
@@ -1832,15 +1877,14 @@ void solver::enumerate()
                             }
                         }
                     } else {
-                        HistoryContent content = history_node->entry.load();
-                        if (subpath_cost > content.prefix_cost) {
+                        if (subpath_cost > history_node->subpath_cost) {
                             pruned_count++;
                             prune(source_node, taken_node, edge_weight);
                             pruned = true;
                             log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
                             break;
                         } else {
-                            history_node->entry.store({subpath_cost, content.lower_bound});
+                            history_node->subpath_cost = subpath_cost;
                         }
                     }
                 }

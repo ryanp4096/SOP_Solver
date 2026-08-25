@@ -52,16 +52,20 @@ struct SubpathKey {
     int first_node;
     int last_node;
 };
+struct SubpathHistoryNode {
+    atomic<int> subpath_cost;
+    // add on for thread stopping
+};
 struct SubpathEntry {
     SubpathKey key;
-    HistoryNode *node;
+    SubpathHistoryNode node;
+    SubpathEntry *next;
 };
-typedef list<SubpathEntry> SubpathBucket;
+// typedef list<SubpathEntry> SubpathBucket;
 struct SubpathMap {
-    vector<SubpathBucket *> buckets;
+    vector<atomic<SubpathEntry *>> buckets;
     vector<spin_lock> locks;
-    vector<MemoryAllocator<SubpathBucket>> bucket_allocators;
-    vector<MemoryAllocator<HistoryNode>> node_allocators;
+    vector<MemoryAllocator<SubpathEntry>> bucket_allocators;
 };
 
 
@@ -149,8 +153,8 @@ public:
         Return- a pointer to the node found, if any */
     HistoryNode *retrieve(Key &key, int depth);
 
-    HistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
-    HistoryNode *retrieve_subpath(SubpathKey &key, int depth);
+    SubpathHistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
+    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, int depth);
 
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
     bool free_subtable_memory(float *mem_limit); // free the history table memory

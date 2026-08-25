@@ -66,3 +66,6 @@ TRACE_DETAIL_LEVEL = 0
 
 // For debugging: manually check whether the current path at each node should match with an LKH prefix/subpath history entry (1 for enable, 0 for disable)
 ENABLE_MANUAL_MATCH_CHECK = 0
+
+// Enable separate history table for subpaths (1 for enable, 0 for disable)
+ENABLE_SUBPATH_HISTORY_TABLE = 1
