@@ -24,6 +24,7 @@ struct PrefixEntry {
     HistoryNode node;
     PrefixEntry *next;
 };
+typedef atomic<PrefixEntry *> PrefixBucket;
 
 /**
  * Allocates memory for a given type. Used when frequently allocating memory for a given type to prevent high number of memory allocations, by allocating one large block of memory at a time.
@@ -51,14 +52,15 @@ struct SubpathEntry {
     SubpathHistoryNode node;
     SubpathEntry *next;
 };
+typedef atomic<SubpathEntry *> SubpathBucket;
 
 struct SubpathMap {
-    vector<atomic<SubpathEntry *>> buckets;
+    vector<SubpathBucket> buckets;
     vector<spin_lock> locks;
     vector<MemoryAllocator<SubpathEntry>> bucket_allocators;
 };
 struct PrefixMap {
-    vector<atomic<PrefixEntry *>> buckets;
+    vector<PrefixBucket> buckets;
     vector<spin_lock> locks;
     vector<MemoryAllocator<PrefixEntry>> bucket_allocators;
 };
@@ -149,15 +151,23 @@ public:
         key - the history key corresponding to the partial path this entry represents
         Return- a pointer to the node found, if any */
     HistoryNode *retrieve(PrefixKey &key, int depth);
+    HistoryNode *retrieve_or_insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix, bool *inserted);
 
     SubpathHistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
     SubpathHistoryNode *retrieve_subpath(SubpathKey &key, int depth);
+    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth, bool *inserted);
 
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
     bool free_subtable_memory(float *mem_limit); // free the history table memory
     void track_entries_and_references();         // to track down the entries and its reference in history_table
     int get_bucket_index(int depth);             // fetching the bucket index based on the depth of the newer entry
     void update_gp_depth(int gp_depth);          // updating the global pool entry size
+
+private:
+    PrefixEntry *search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key);
+    SubpathEntry *search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key);
+    PrefixEntry *insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, bool backtracked, bool is_best_suffix);
+    SubpathEntry *insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost);
 };
 
 #endif

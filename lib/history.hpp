@@ -30,6 +30,7 @@ struct HistoryNode
 	// int level;
 	atomic<uint8_t> active_threadID; // the thread that is exploring this subspace (there can only ever be one, because any others would be stopped)
 	atomic<HistoryContent> entry;
+	spin_lock lock;
 };
 
 struct Active_Node
@@ -54,7 +55,7 @@ struct SubpathHistoryNode
     uint32_t subpath_cost;
 	// uint32_t active_threads;
 	// bool in_best_solution;
-	// spin_lock lock;
+	spin_lock lock;
 };
 
 #endif

@@ -119,12 +119,12 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
     {
         prefix_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<PrefixEntry>(BUCKET_BLK_SIZE));
         prefix_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
-        prefix_maps[i].buckets = vector<atomic<PrefixEntry *>>(size);
+        prefix_maps[i].buckets = vector<PrefixBucket>(size);
 
         if (enable_subpath_history_table) {
             subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
             subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
-            subpath_maps[i].buckets = vector<atomic<SubpathEntry *>>(size);
+            subpath_maps[i].buckets = vector<SubpathBucket>(size);
         }
     }
 }
@@ -159,83 +159,56 @@ HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bo
     
     PrefixMap &map = prefix_maps[group_index];
 
-    if (thread_id % 4 == 0)
-    {
-        insert_count++;
-        if (insert_count >= 100000)
-        {
-            current_size = total_ram - get_free_mem();
-            insert_count = 0;
-        }
-    }
-
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
-    int bucket = (val + key.last_node * 1217) % num_buckets;
+    int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
-    spin_lock &lock = map.locks[bucket / COVER_AREA];
+    spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
-    if (!is_data_available[group_index] || blocked_groups[group_index])
-    {
-        block_count[group_index]++;
+
+    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, backtracked, is_best_suffix);
+    lock.unlock();
+    return entry == NULL ? NULL : &entry->node;
+}
+
+HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix, bool *inserted)
+{
+    int group_index = get_bucket_index(depth);
+    *inserted = false;
+    if (!is_data_available[group_index]) return NULL;
+    if (blocked_groups[group_index]) return retrieve(key, depth);
+    PrefixMap &map = prefix_maps[group_index];
+    
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket_index = (val + key.last_node * 1217) % num_buckets;
+
+    spin_lock &lock = map.locks[bucket_index / COVER_AREA];
+    lock.lock();
+
+    PrefixEntry *found_entry = search_prefix_bucket(map.buckets[bucket_index], key);
+    if (found_entry != NULL) {
         lock.unlock();
-        return NULL;
+        return &found_entry->node;
     }
 
-    PrefixEntry *entry = map.bucket_allocators[thread_id].allocate();
-    if (entry == NULL)
-        return NULL;
-    
-    entry->key = key;
-    entry->node.explored = backtracked;
-    entry->node.entry.store({prefix_cost, lower_bound});
-    entry->node.active_threadID = thread_id;
-    entry->node.is_best_suffix = is_best_suffix;
-    entry->next = map.buckets[bucket];
-    map.buckets[bucket] = entry;
+    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, backtracked, is_best_suffix);
     lock.unlock();
-    return &entry->node;
+    *inserted = true;
+    return entry == NULL ? NULL : &entry->node;
 }
 
 HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
 {
-    if (depth < gp_depth)
-        return NULL;
+    if (depth < gp_depth) return NULL;
     int group_index = get_bucket_index(depth);
-
-    if (!is_data_available[group_index])
-        return NULL;
+    if (!is_data_available[group_index]) return NULL;
+    PrefixMap &map = prefix_maps[group_index];
 
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
-    PrefixMap &map = prefix_maps[group_index];
-
-    PrefixEntry *bucket = map.buckets[bucket_index];
-    if (bucket == NULL) {
-        return NULL;
-
-    } else if (bucket->next == NULL) {
-        if (
-            key.last_node == bucket->key.last_node &&
-            key.bit_vector == bucket->key.bit_vector
-        ) {
-            return &bucket->node;
-        } else {
-            return NULL;
-        }
-
-    }
-    if (is_data_available[group_index])
-        for (PrefixEntry *entry = bucket; entry != NULL; entry = entry->next) {
-            if (
-                key.last_node == entry->key.last_node &&
-                key.bit_vector == entry->key.bit_vector
-            ) {
-                return &entry->node;
-            }
-        }
-
-    return NULL;
+    PrefixEntry *entry = search_prefix_bucket(map.buckets[bucket_index], key);
+    if (entry == NULL) return NULL;
+    return &entry->node;
 }
 
 SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth)
@@ -282,6 +255,33 @@ SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_c
     return &entry->node;
 }
 
+
+SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth, bool *inserted)
+{
+    int group_index = get_bucket_index(depth);
+    *inserted = false;
+    if (!is_data_available[group_index]) return NULL;
+    if (blocked_groups[group_index]) return retrieve_subpath(key, depth);
+    SubpathMap &map = subpath_maps[group_index];
+    
+    size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
+    int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
+
+    spin_lock &lock = map.locks[bucket_index / COVER_AREA];
+    lock.lock();
+
+    SubpathEntry *found_entry = search_subpath_bucket(map.buckets[bucket_index], key);
+    if (found_entry != NULL) {
+        lock.unlock();
+        return &found_entry->node;
+    }
+
+    SubpathEntry *entry = insert_subpath_entry(map, group_index, thread_id, bucket_index, key, subpath_cost);
+    lock.unlock();
+    *inserted = true;
+    return entry == NULL ? NULL : &entry->node;
+}
+
 SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, int depth)
 {
     if (!enable_subpath_history_table) return NULL;
@@ -323,6 +323,121 @@ SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, int depth)
         }
 
     return NULL;
+}
+
+PrefixEntry *History_Table::search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key)
+{
+    PrefixEntry *first = bucket.load();
+    if (first == NULL) return NULL;
+
+    if (first->next == NULL) {
+        if (
+            key.last_node == first->key.last_node &&
+            key.bit_vector == first->key.bit_vector
+        ) {
+            return first;
+        } else {
+            return NULL;
+        }
+    }
+    for (PrefixEntry *entry = first; entry != NULL; entry = entry->next) {
+        if (
+            key.last_node == entry->key.last_node &&
+            key.bit_vector == entry->key.bit_vector
+        ) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key)
+{
+    SubpathEntry *first = bucket.load();
+    if (first == NULL) return NULL;
+
+    if (first->next == NULL) {
+        if (
+            key.first_node == first->key.first_node &&
+            key.last_node == first->key.last_node &&
+            key.bit_vector == first->key.bit_vector
+        ) {
+            return first;
+        } else {
+            return NULL;
+        }
+    }
+    for (SubpathEntry *entry = first; entry != NULL; entry = entry->next) {
+        if (
+            key.first_node == entry->key.first_node &&
+            key.last_node == entry->key.last_node &&
+            key.bit_vector == entry->key.bit_vector
+        ) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, bool backtracked, bool is_best_suffix)
+{
+    if (thread_id % 4 == 0)
+    {
+        insert_count++;
+        if (insert_count >= 100000)
+        {
+            current_size = total_ram - get_free_mem();
+            insert_count = 0;
+        }
+    }
+
+    if (!is_data_available[group_index] || blocked_groups[group_index])
+    {
+        block_count[group_index]++;
+        return NULL;
+    }
+
+    PrefixEntry *entry = map.bucket_allocators[thread_id].allocate();
+    if (entry == NULL)
+        return NULL;
+    
+    entry->key = key;
+    entry->node.explored = backtracked;
+    entry->node.entry.store({prefix_cost, lower_bound});
+    entry->node.active_threadID = thread_id;
+    entry->node.is_best_suffix = is_best_suffix;
+    entry->next = map.buckets[bucket_index];
+    map.buckets[bucket_index] = entry;
+    return entry;
+}
+
+SubpathEntry *History_Table::insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost)
+{
+    if (thread_id % 4 == 0)
+    {
+        insert_count++;
+        if (insert_count >= 100000)
+        {
+            current_size = total_ram - get_free_mem();
+            insert_count = 0;
+        }
+    }
+
+    if (!is_data_available[group_index] || blocked_groups[group_index])
+    {
+        block_count[group_index]++;
+        return NULL;
+    }
+
+    SubpathEntry *entry = map.bucket_allocators[thread_id].allocate();
+    if (entry == NULL)
+        return NULL;
+    
+    entry->key = key;
+    entry->node.subpath_cost = subpath_cost;
+    entry->next = map.buckets[bucket_index];
+    map.buckets[bucket_index] = entry;
+    return entry;
 }
 
 
