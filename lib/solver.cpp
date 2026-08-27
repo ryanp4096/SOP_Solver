@@ -1406,26 +1406,28 @@ void solver::processBestTour()
 
                     if (enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
                         PrefixKey prefixKey = {subpath_bit_vector, end};
-                        HistoryNode *history_node = history_table.retrieve(prefixKey, depth);
-                        if (history_node != NULL) {
-                            HistoryContent content = history_node->entry.load();
-                            if (content.prefix_cost > subpath_cost)
-                            {
-                                int old_prefix_cost = content.prefix_cost;
-                                content.prefix_cost = subpath_cost; // Update the cost in the history table
-                                history_node->entry.store(content);
-                                bool is_best_suffix = lkh_suffix_cost == content.lower_bound - content.prefix_cost;
-                                history_node->is_best_suffix = is_best_suffix;
-                                std::cout << "[processBestTour] Subpath Updated as Prefix - depth " << depth << " shift " << shift << " (entry: " << old_prefix_cost << ", lkh: " << subpath_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
-                                checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
-                            } else {
-                                std::cout << "[processBestTour] Subpath Ignored as Prefix - depth " << depth << " shift " << shift << " (entry: " << content.prefix_cost << ", lkh: " << subpath_cost << ")" << std::endl;
-                                checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
-                            }
-                        } else {
-                            push_to_history_table(prefixKey, -1, &history_node, false, false, depth, subpath_cost);
+                        bool inserted;
+                        HistoryNode *history_node = history_table.retrieve_or_insert(prefixKey, depth, subpath_cost, -1, UNEXPLORED, thread_id, &inserted);
+                        if (inserted) {
                             std::cout << "[processBestTour] Subpath Added as Prefix - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                             checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
+                        } else {
+                            history_node->lock.lock();
+                            int old_prefix_cost = history_node->prefix_cost;
+                            if (subpath_cost < old_prefix_cost)
+                            {
+                                history_node->prefix_cost = subpath_cost; // Update the cost in the history table
+                                history_node->lower_bound -= old_prefix_cost - subpath_cost;
+                                bool explored = total_cost == history_node->lower_bound; // if already at lower bound, no need to explore, cannot be better than lower bound
+                                history_node->state = explored ? EXPLORED : UNEXPLORED;
+                                history_node->lock.unlock();
+                                std::cout << "[processBestTour] Subpath Updated as Prefix - depth " << depth << " shift " << shift << " (entry: " << old_prefix_cost << ", lkh: " << subpath_cost << ", explored: " << explored << ")" << std::endl;
+                                checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
+                            } else {
+                                history_node->lock.unlock();
+                                std::cout << "[processBestTour] Subpath Ignored as Prefix - depth " << depth << " shift " << shift << " (entry: " << old_prefix_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                                checkSubpath(localBestTour, prefixKey, subpath_cost, depth, shift);
+                            }
                         }
                     }
 
@@ -1458,8 +1460,11 @@ void solver::processBestTour()
                             .first_node = start,
                             .last_node = end
                         };
-                        SubpathHistoryNode *history_node = history_table.retrieve_subpath(subpathKey, depth);
-                        if (history_node != NULL) {
+                        bool inserted;
+                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpathKey, depth, subpath_cost, thread_id, &inserted);
+                        if (inserted) {
+                            std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
+                        } else {
                             int old_subpath_cost = history_node->subpath_cost;
                             if (subpath_cost < old_subpath_cost) {
                                 history_node->subpath_cost = subpath_cost;
@@ -1467,9 +1472,6 @@ void solver::processBestTour()
                             } else {
                                 std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
                             }
-                        } else {
-                            history_table.insert_subpath(subpathKey, subpath_cost, thread_id, depth);
-                            std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                         }
                     }
 
@@ -1480,14 +1482,18 @@ void solver::processBestTour()
                 PrefixKey prefixKey = {bit_vector, dst}; // The second element is the last element of the prefix
 
                 // Check if this key exists in the history table
-                HistoryNode *history_node = history_table.retrieve(prefixKey, i + 1); // i start from 0
+                bool inserted;
+                HistoryNode *history_node = history_table.retrieve_or_insert(prefixKey, i + 1, prefix_cost, -1, UNEXPLORED, thread_id, &inserted);
 
-                if (history_node != NULL)
-                {
-                    HistoryContent content = history_node->entry.load();
+                if (inserted) {
+                    std::cout << "[processBestTour] Prefix Added - depth " << i + 1 << " (lkh cost: " << prefix_cost << ")" << std::endl;
+                    checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
+                } else {
+                    history_node->lock.lock();
+                    int old_prefix_cost = history_node->prefix_cost;
 
                     // Compare the prefix cost with the stored cost in the history table
-                    if (content.prefix_cost > prefix_cost)
+                    if (prefix_cost < old_prefix_cost)
                     {
                         // std::cout << "Prefix path (" << src << " to " << dst << ") is better than history. Current Cost: "
                         //            << prefix_cost << ", History Cost: " << content.prefix_cost << std::endl;
@@ -1505,9 +1511,7 @@ void solver::processBestTour()
                         // else
                         //    std::cout << "correct lower bound" << endl;
 
-                        int old_prefix_cost = content.prefix_cost;
-                        content.prefix_cost = prefix_cost; // Update the cost in the history table
-                        history_node->entry.store(content);
+                        history_node->prefix_cost = prefix_cost; // Update the cost in the history table
                         /**
                          * we are checking if suffix from the LKH entry is equal to suffix lower bound in the history table
                          * if equal then we know that it is the best suffix
@@ -1517,31 +1521,22 @@ void solver::processBestTour()
                          *
                          */
                         // bool is_best_suffix = lkh_suffix_cost - cost_graph[src][dst].weight == content.lower_bound - content.prefix_cost;
-                        bool is_best_suffix = lkh_suffix_cost == content.lower_bound - content.prefix_cost;
-                        history_node->is_best_suffix = is_best_suffix;
-                        std::cout << "[processBestTour] Prefix " << i << " Updated (entry: " << old_prefix_cost << ", lkh: " << prefix_cost << ", isBestSuffix: " << is_best_suffix << ")" << std::endl;
+                        history_node->lower_bound -= old_prefix_cost - prefix_cost;
+                        bool explored = total_cost == history_node->lower_bound;
+                        history_node->state = explored ? EXPLORED : UNEXPLORED;
+                        history_node->lock.unlock();
+                        std::cout << "[processBestTour] Prefix " << i << " Updated (entry: " << old_prefix_cost << ", lkh: " << prefix_cost << ", explored: " << explored << ")" << std::endl;
                         checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
 
                     } else {
-                        std::cout << "[processBestTour] Prefix " << i << " Ignored (entry: " << content.prefix_cost << ", lkh: " << prefix_cost << ")" << std::endl;
+                        history_node->lock.unlock();
+                        std::cout << "[processBestTour] Prefix " << i << " Ignored (entry: " << old_prefix_cost << ", lkh: " << prefix_cost << ")" << std::endl;
                         checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
                     }
                     // else
                     // {
                     //     content.prefix_cost = prefix_cost; // Update the cost in the history table
                     // }
-                }
-                else
-                {
-                    // numberOfTimesBestSuffixEntryAdded++;
-                    push_to_history_table(prefixKey, -1, &history_node, false, false, i + 1, prefix_cost); // i+1 for depth because i starts from 0
-                    // std::cout << "Prefix path (" << src << " to " << dst << ") is worse than history. Current Cost: "
-                    //            << prefix_cost << ", History Cost: " << content.prefix_cost << std::endl;
-                    // HistoryNode* node = history_table.retrieve(prefixKey, i + 1);
-                    // if (node == NULL) std::cout << "[processBestTour] Prefix " << i << " FAILED TO ADD" << std::endl;
-                    // else
-                    std::cout << "[processBestTour] Prefix " << i << " Added (lkh cost: " << prefix_cost << ")" << std::endl;
-                    checkSubpath(localBestTour, prefixKey, prefix_cost, depth, 0);
                 }
             }
         }
@@ -1557,6 +1552,7 @@ void solver::processBestTour()
 
 void solver::start_thread()
 {
+    subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
     if (trace_enabled) {
         string path;
         if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
@@ -1722,89 +1718,96 @@ void solver::enumerate()
                 // false: someone else is performing better than this node
                 // false: the improvement is not worth it (we are adding an entry in the request buffer)
                 // true: the improvement is worth it (we are adding an entry in the request buffer)
-                bool decision = history_utilization(problem_state.history_key, problem_state.current_cost, &lower_bound, &taken, &his_node, source_node, taken_node);
-                if (!taken)
-                { // if there is no similar entry in the history table
-                    lower_bound = dynamic_hungarian(source_node, taken_node);
-                    trace.write(TRACE_HISTORY_NO_MATCH, 1);
-                    trace.write_detail(lower_bound, 4);
-
-                    // TODO_VIKAS: can we check the lower bound with the best cost before inserting into the history table
-
-                    if (!limit_insertion)
-                    {
-                        if (history_table.get_current_size() < mem_limit * history_table.get_max_size())
-                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
-                        else if (number_of_groups == 1)
-                        {
-                            /**
-                             * if number of groups is 1, we want to ignore the blocking and the deleting of the history table
-                             * by calling free_subtable_memory function, we are blocking the insertion of the history table
-                             */
-
-                            history_table.free_subtable_memory(&mem_limit);
-                            std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-
-                            /** to prevent further checking, we set limit_insertion to true */
-                            limit_insertion = true;
-                        }
-                        else
-                        {
-                            if (!is_all_table_blocked)
-                            {
-                                if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
-                                    push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
-                            }
-                            else
-                            {
-                                if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
-                                {
-                                    // local_pools->print_top_sequence_sizes(thread_total);
-                                    bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
-                                    if (is_space_increased_or_available)
-                                    {
-                                        if (problem_state.current_path.size() <= bucket_size)
-                                            push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
-                                    }
-                                    else
-                                    {
-                                        cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-
-                                        /** to prevent further checking, we set limit_insertion to true */
-                                        limit_insertion = true;
-                                    }
-                                }
-                                else
-                                    push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
-                            }
-                        }
-                    }
-                }
-                else if (taken && !decision)
-                { // if this path is dominated by another path
-                    // tracking the pruning at current depth
-                    // history_table_pruning_success[problem_state.current_path.size()]++;
+                bool pruned = history_utilization(problem_state.history_key, problem_state.current_cost, &lower_bound, &taken, &his_node, source_node, taken_node);
+                if (pruned) {
                     pruned_count++;
                     log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
                     prune(source_node, taken_node, edge_weight);
                     continue;
                 }
 
-                if (lower_bound >= best_cost)
-                {
-                    trace.write(TRACE_PRUNE_LB, 1);
-                    if (his_node != NULL)
-                    {
-                        HistoryContent content = his_node->entry.load();
-                        // TODO_VIKAS: it will never be greater because prefix_cost is same as the problem_state current_cost
-                        if (content.prefix_cost >= problem_state.current_cost)
-                            his_node->explored = true;
-                    }
-                    pruned_count++;
-                    log_node(thread_id, problem_state, match_info, PRUNE_LOWER_BOUND);
-                    prune(source_node, taken_node, edge_weight);
-                    continue;
-                }
+                // if (!taken)
+                // { // if there is no similar entry in the history table
+                //     lower_bound = dynamic_hungarian(source_node, taken_node);
+                //     trace.write(TRACE_HISTORY_NO_MATCH, 1);
+                //     trace.write_detail(lower_bound, 4);
+
+                //     // TODO_VIKAS: can we check the lower bound with the best cost before inserting into the history table
+
+                //     if (!limit_insertion)
+                //     {
+                //         if (history_table.get_current_size() < mem_limit * history_table.get_max_size())
+                //             push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
+                //         else if (number_of_groups == 1)
+                //         {
+                //             /**
+                //              * if number of groups is 1, we want to ignore the blocking and the deleting of the history table
+                //              * by calling free_subtable_memory function, we are blocking the insertion of the history table
+                //              */
+
+                //             history_table.free_subtable_memory(&mem_limit);
+                //             std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+
+                //             /** to prevent further checking, we set limit_insertion to true */
+                //             limit_insertion = true;
+                //         }
+                //         else
+                //         {
+                //             if (!is_all_table_blocked)
+                //             {
+                //                 if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
+                //                     push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
+                //             }
+                //             else
+                //             {
+                //                 if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
+                //                 {
+                //                     // local_pools->print_top_sequence_sizes(thread_total);
+                //                     bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
+                //                     if (is_space_increased_or_available)
+                //                     {
+                //                         if (problem_state.current_path.size() <= bucket_size)
+                //                             push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
+                //                     }
+                //                     else
+                //                     {
+                //                         cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
+
+                //                         /** to prevent further checking, we set limit_insertion to true */
+                //                         limit_insertion = true;
+                //                     }
+                //                 }
+                //                 else
+                //                     push_to_history_table(problem_state.history_key, lower_bound, &his_node, false, true, problem_state.current_path.size(), problem_state.current_cost);
+                //             }
+                //         }
+                //     }
+                // }
+                // else if (taken && !decision)
+                // { // if this path is dominated by another path
+                //     // tracking the pruning at current depth
+                //     // history_table_pruning_success[problem_state.current_path.size()]++;
+                //     pruned_count++;
+                //     log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
+                //     prune(source_node, taken_node, edge_weight);
+                //     continue;
+                // }
+
+                // if (lower_bound >= best_cost)
+                // {
+                //     trace.write(TRACE_PRUNE_LB, 1);
+                //     if (his_node != NULL)
+                //     {
+                //         HistoryContent content = his_node->entry.load();
+                //         // TODO_VIKAS: it will never be greater because prefix_cost is same as the problem_state current_cost
+                //         if (content.prefix_cost >= problem_state.current_cost)
+                //             his_node->explored = true;
+                //     }
+                //     pruned_count++;
+                //     log_node(thread_id, problem_state, match_info, PRUNE_LOWER_BOUND);
+                //     prune(source_node, taken_node, edge_weight);
+                //     continue;
+                // }
 
                 // vector<Subpath> new_subpaths;
                 // new_subpaths.reserve(problem_state.subpaths.size() + 1);
@@ -1828,61 +1831,24 @@ void solver::enumerate()
 
                 /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
                 if (enable_subpath_history_table) {
-                    boost::dynamic_bitset<> subpath_bit_vector(instance_size, false);
-                    subpath_bit_vector[taken_node] = true;
+                    subpath_key.bit_vector.reset();
+                    subpath_key.bit_vector[taken_node] = true;
+                    subpath_key.first_node = taken_node;
+                    subpath_key.last_node = taken_node;
                     int subpath_cost = 0;
                     bool pruned = false;
                     
                     for (int length = 2; length < problem_state.current_path.size(); length++) {
                         int src = problem_state.current_path[problem_state.current_path.size() - length];
                         int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
-                        subpath_bit_vector[src] = true;
+                        subpath_key.bit_vector[src] = true;
                         subpath_cost += cost_graph[src][dst].weight;
                         if (length < 4) continue;
 
-                        SubpathKey key = {
-                            .bit_vector = subpath_bit_vector,
-                            .first_node = src,
-                            .last_node = taken_node
-                        };
-                        SubpathHistoryNode *history_node = history_table.retrieve_subpath(key, length);
-                        if (history_node == NULL) {
-                            /* Subpath not in history table - add to history table */
-                            if (!limit_insertion) {
-                                if (history_table.get_current_size() < mem_limit * history_table.get_max_size()) {
-                                    history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                } else if (number_of_groups == 1) {
-                                    history_table.free_subtable_memory(&mem_limit);
-                                    std::cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-                                    limit_insertion = true;
-                                } else {
-                                    if (!is_all_table_blocked)
-                                    {
-                                        if (!history_table.check_and_manage_memory(problem_state.current_path.size(), &mem_limit, &is_all_table_blocked))
-                                            history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                    }
-                                    else
-                                    {
-                                        if (history_table.get_current_size() >= mem_limit * history_table.get_max_size())
-                                        {
-                                            bool is_space_increased_or_available = history_table.free_subtable_memory(&mem_limit);
-                                            if (is_space_increased_or_available)
-                                            {
-                                                if (problem_state.current_path.size() <= bucket_size)
-                                                    history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                            }
-                                            else
-                                            {
-                                                cout << "Blocking Insertion at time is: " << main_timer.get_time_seconds() << endl;
-                                                limit_insertion = true;
-                                            }
-                                        }
-                                        else
-                                            history_node = history_table.insert_subpath(key, subpath_cost, thread_id, length);
-                                    }
-                                }
-                            }
-                        } else {
+                        subpath_key.first_node = src;
+                        bool inserted;
+                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
+                        if (!inserted) {
                             if (subpath_cost > history_node->subpath_cost) {
                                 /* Better subpath found in history table, prune */
                                 pruned_count++;
@@ -2025,7 +1991,8 @@ void solver::enumerate()
         // TODO_VIKAS: Shouldn't we pass true in the last parameter, since we the iteration is completed
         if (limit_insertion && history_table.get_current_size() < history_table.get_max_size())
         {
-            push_to_history_table(problem_state.history_key, lb_liminsert, NULL, true, true, problem_state.current_path.size(), problem_state.current_cost);
+            // push_to_history_table(problem_state.history_key, lb_liminsert, NULL, true, true, problem_state.current_path.size(), problem_state.current_cost);
+            history_table.insert(problem_state.history_key, problem_state.current_path.size(), problem_state.current_cost, lb_liminsert, EXPLORED, thread_id);
         }
 
         // TODO: replace above with this, for taking depth into account
@@ -2445,118 +2412,240 @@ int solver::dynamic_hungarian(int src, int dst)
     return lb;
 }
 
-bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
+bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **history_node, int source_node, int taken_node)
 {
-    HistoryNode *history_node = history_table.retrieve(key, problem_state.current_path.size());
+    *found = false;
+    bool inserted;
+    *history_node = history_table.retrieve_or_insert(key, problem_state.current_path.size(), problem_state.current_cost, -1, EXPLORING, thread_id, &inserted);
+    if (*history_node == NULL) {
+        return false;
+    }
+    HistoryNode &entry = **history_node;
 
-    if (history_node == NULL)
-        return true;
+    /* Key not found in table */
+    if (inserted) {
+        /* Calculate lower bound */
+        *lowerbound = dynamic_hungarian(source_node, taken_node);
+        entry.lock.lock();
+
+        if (entry.active_thread != thread_id) {
+            /* While calculating lower bound, another thread found a better path */
+            entry.lock.unlock();
+            return true;
+        }
+
+        entry.lower_bound = *lowerbound;
+
+        if (entry.lower_bound >= best_cost) {
+            entry.state = EXPLORED;
+            entry.lock.unlock();
+            return true;
+
+        } else {
+            entry.lock.unlock();
+            return false;
+        }
+    }
 
     *found = true;
-    *entry = history_node;
-    HistoryContent content = history_node->entry.load();
-    *lowerbound = content.lower_bound;
+    entry.lock.lock();
 
-    int target_ID = history_node->active_threadID; // find whoever was working in this subspace
-    int imp = content.prefix_cost - cost;
-
-    if (history_node->is_best_suffix)
-    {
-        // we already the have best suffix and same cost so no need to proceed
-        if (cost >= content.prefix_cost)
-        {
-            trace.write(TRACE_HISTORY_PRUNE_COST, 1);
-            trace.write_detail(content.lower_bound, 4);
-            trace.write_detail(content.prefix_cost, 4);
-            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
-            return false;
-        }
-    }
-    else
-    {
+    /* Continue only if current path is better than history entry (or equal if unexplored) */
+    if (entry.state == UNEXPLORED) {
         not_best_suffix_count++;
-        // const char *dir = cost == content.prefix_cost ? "==" : (cost > content.prefix_cost ? ">" : "<");
-        // std::cout << "Not Best Suffix Matched   Path Cost " << cost << "  " << dir << "  Saved Cost " << content.prefix_cost;
-        // std::cout << "   Depth " << key.first.count() << "   Time " << main_timer.get_time_seconds() << endl;
-        // we don't have the best suffix, so if the costs are equal, we need to explore that path
-        if (cost > content.prefix_cost)
-        {
-            trace.write(TRACE_HISTORY_PRUNE_COST, 1);
-            trace.write_detail(content.lower_bound, 4);
-            trace.write_detail(content.prefix_cost, 4);
-            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
-            return false;
+        if (problem_state.current_cost > entry.prefix_cost) {
+            /* Current path is worse than history entry. Prune */
+            entry.lock.unlock();
+            return true;
         }
-        // we are updating the lower bound when the cost is better or same
-        // we have to do this, since we don't have the best suffix lower bound (i.e., its coming from LKH)
-        // from here, we have to consider this updated lowerbound
-        else
-            *lowerbound = dynamic_hungarian(source_node, taken_node);
+    } else {
+        if (problem_state.current_cost >= entry.prefix_cost) {
+            /* Current path is worse than history entry (or equal to another entry that is already exploring/explored). Prune */
+            entry.lock.unlock();
+            return true;
+        }
     }
 
-    if (!history_node->explored)
-    { // TODO: thread stopping
-        if (enable_threadstop && active_threads > 0 && target_ID != thread_id)
-        { // then issue thread stop request, since this path is superior
-            if (!thread_requests[target_ID].has_request || thread_requests[target_ID].request.target_depth > (int)problem_state.current_path.size())
+
+    /* If another thread is exploring, stop it */
+    if (entry.state == EXPLORING && enable_threadstop) {
+        if (active_threads > 0 && entry.active_thread != thread_id)
+        {
+            int target_id = entry.active_thread;
+            if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size())
             {
-                thread_requests[target_ID].lock.lock();
-                if (!thread_requests[target_ID].has_request || thread_requests[target_ID].request.target_depth > (int)problem_state.current_path.size()) // extra validation
+                thread_requests[target_id].lock.lock();
+                if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size()) // extra validation
                 {
                     thread_stop_requested++;
-                    thread_requests[target_ID].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
-                                                                        content.prefix_cost, target_ID, key.bit_vector);
-                    thread_requests[target_ID].has_request = true;
+                    thread_requests[target_id].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
+                                                                        entry.prefix_cost, target_id, key.bit_vector);
+                    thread_requests[target_id].has_request = true;
                 }
-                thread_requests[target_ID].lock.unlock();
+                thread_requests[target_id].lock.unlock();
             }
         }
     }
+    entry.active_thread = thread_id;
+    entry.state = EXPLORING;
 
-    if (history_node->is_best_suffix)
-    {
-        if (imp <= content.lower_bound - best_cost)
-        {
-            trace.write(TRACE_HISTORY_PRUNE_LB, 1);
-            trace.write_detail(content.lower_bound, 4);
-            trace.write_detail(content.prefix_cost, 4);
-            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
-            return false;
-        } else
-        {
-            trace.write(TRACE_HISTORY_NO_PRUNE, 1);
-            trace.write_detail(content.lower_bound, 4);
-            trace.write_detail(content.prefix_cost, 4);
-            trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+
+    /* Calculate or Update Lower Bound */
+    if (entry.lower_bound == -1) {
+        /* Lower bound not stored, calculate */
+        entry.lock.unlock();
+        *lowerbound = dynamic_hungarian(source_node, taken_node);
+        entry.lock.lock();
+
+        if (entry.active_thread != thread_id) {
+            /* While calculating lower bound, another thread found a better path */
+            entry.lock.unlock();
+            return true;
         }
-        history_node->entry.store({cost, content.lower_bound - imp});
-        *lowerbound = content.lower_bound - imp;
-        *entry = history_node;
-    }
-    else
-    {
-        /**
-         * since we don't have the best suffix lower bound, we will not consider any improvement logic here
-         * whenever, we are updating the lower bound from B&B, we will set is_best_suffix to true
-         */
-        trace.write(TRACE_HISTORY_NO_PRUNE, 1);
-        trace.write_detail(*lowerbound, 4);
-        trace.write_detail(content.prefix_cost, 4);
-        trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
 
-        numberOfTimesBestSuffixEntryUpdated++;
-        if (cost < content.prefix_cost) {
-            numberOfTimesBetterThanLKH++;
-        }
-        history_node->is_best_suffix = true;
-        history_node->entry.store({cost, *lowerbound});
-        *entry = history_node;
-    }
-    history_node->explored = false;
-    history_node->active_threadID = thread_id;
+        entry.lower_bound = *lowerbound;
 
-    return true;
+    } else {
+        /* Lower bound already stored, update based on improvement */
+        int improvement = entry.prefix_cost - problem_state.current_cost;
+        *lowerbound = entry.lower_bound - improvement;
+        entry.lower_bound = *lowerbound;
+    }
+
+    entry.prefix_cost = problem_state.current_cost;
+
+    /* Prune if lower bound of current path cannot be better than best cost */
+    if (entry.lower_bound >= best_cost) {
+        entry.state = EXPLORED;
+        entry.lock.unlock();
+        return true;
+
+    } else {
+        entry.lock.unlock();
+        return false;
+    }
 }
+
+// bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source_node, int taken_node)
+// {
+//     bool inserted;
+//     HistoryNode *history_node = history_table.retrieve_or_insert(key, problem_state.current_cost, -1, thread_id, false, problem_state.current_path.size(), 0, true, &inserted);
+//     // HistoryNode *history_node = history_table.retrieve(key, problem_state.current_path.size());
+
+//     if (inserted) {
+//         *found = false;
+//         *entry = history_node;
+//         return true;
+//     }
+
+//     *found = true;
+//     *entry = history_node;
+//     history_node->lock.lock();
+//     HistoryContent content = history_node->entry.load();
+//     *lowerbound = content.lower_bound;
+
+//     int target_ID = history_node->active_threadID; // find whoever was working in this subspace
+//     int imp = content.prefix_cost - cost;
+
+//     if (history_node->is_best_suffix)
+//     {
+//         // we already the have best suffix and same cost so no need to proceed
+//         if (cost >= content.prefix_cost)
+//         {
+//             trace.write(TRACE_HISTORY_PRUNE_COST, 1);
+//             trace.write_detail(content.lower_bound, 4);
+//             trace.write_detail(content.prefix_cost, 4);
+//             trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+//             history_node->lock.unlock();
+//             return false;
+//         }
+//     }
+//     else
+//     {
+//         not_best_suffix_count++;
+//         // const char *dir = cost == content.prefix_cost ? "==" : (cost > content.prefix_cost ? ">" : "<");
+//         // std::cout << "Not Best Suffix Matched   Path Cost " << cost << "  " << dir << "  Saved Cost " << content.prefix_cost;
+//         // std::cout << "   Depth " << key.first.count() << "   Time " << main_timer.get_time_seconds() << endl;
+//         // we don't have the best suffix, so if the costs are equal, we need to explore that path
+//         if (cost > content.prefix_cost)
+//         {
+//             trace.write(TRACE_HISTORY_PRUNE_COST, 1);
+//             trace.write_detail(content.lower_bound, 4);
+//             trace.write_detail(content.prefix_cost, 4);
+//             trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+//             history_node->lock.unlock();
+//             return false;
+//         }
+//         // we are updating the lower bound when the cost is better or same
+//         // we have to do this, since we don't have the best suffix lower bound (i.e., its coming from LKH)
+//         // from here, we have to consider this updated lowerbound
+//         else
+//             *lowerbound = dynamic_hungarian(source_node, taken_node);
+//     }
+
+//     if (!history_node->explored)
+//     { // TODO: thread stopping
+//         if (enable_threadstop && active_threads > 0 && target_ID != thread_id)
+//         { // then issue thread stop request, since this path is superior
+//             if (!thread_requests[target_ID].has_request || thread_requests[target_ID].request.target_depth > (int)problem_state.current_path.size())
+//             {
+//                 thread_requests[target_ID].lock.lock();
+//                 if (!thread_requests[target_ID].has_request || thread_requests[target_ID].request.target_depth > (int)problem_state.current_path.size()) // extra validation
+//                 {
+//                     thread_stop_requested++;
+//                     thread_requests[target_ID].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
+//                                                                         content.prefix_cost, target_ID, key.bit_vector);
+//                     thread_requests[target_ID].has_request = true;
+//                 }
+//                 thread_requests[target_ID].lock.unlock();
+//             }
+//         }
+//     }
+
+//     if (history_node->is_best_suffix)
+//     {
+//         if (imp <= content.lower_bound - best_cost)
+//         {
+//             trace.write(TRACE_HISTORY_PRUNE_LB, 1);
+//             trace.write_detail(content.lower_bound, 4);
+//             trace.write_detail(content.prefix_cost, 4);
+//             trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+//             return false;
+//         } else
+//         {
+//             trace.write(TRACE_HISTORY_NO_PRUNE, 1);
+//             trace.write_detail(content.lower_bound, 4);
+//             trace.write_detail(content.prefix_cost, 4);
+//             trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+//         }
+//         history_node->entry.store({cost, content.lower_bound - imp});
+//         *lowerbound = content.lower_bound - imp;
+//         *entry = history_node;
+//     }
+//     else
+//     {
+//         /**
+//          * since we don't have the best suffix lower bound, we will not consider any improvement logic here
+//          * whenever, we are updating the lower bound from B&B, we will set is_best_suffix to true
+//          */
+//         trace.write(TRACE_HISTORY_NO_PRUNE, 1);
+//         trace.write_detail(*lowerbound, 4);
+//         trace.write_detail(content.prefix_cost, 4);
+//         trace.write_detail(static_cast<int>(history_node->is_best_suffix.load()), 1);
+
+//         numberOfTimesBestSuffixEntryUpdated++;
+//         if (cost < content.prefix_cost) {
+//             numberOfTimesBetterThanLKH++;
+//         }
+//         history_node->is_best_suffix = true;
+//         history_node->entry.store({cost, *lowerbound});
+//         *entry = history_node;
+//     }
+//     history_node->explored = false;
+//     history_node->active_threadID = thread_id;
+
+//     return true;
+// }
 
 /**
  * @brief Inserts a new entry into the history table or updates an existing one.
@@ -2573,10 +2662,10 @@ bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool
  */
 void solver::push_to_history_table(PrefixKey &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost)
 {
-    if (entry == NULL)
-        history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
-    else
-        *entry = history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
+    // if (entry == NULL)
+    //     history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
+    // else
+    //     *entry = history_table.insert(key, prefix_cost, lower_bound, thread_id, backtracked, depth, instance_size / number_of_groups, is_best_suffix);
     return;
 }
 

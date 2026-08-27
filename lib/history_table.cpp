@@ -31,6 +31,7 @@ void MemoryAllocator<T>::free_all() {
     for (T *b : blocks) {
         delete[] b;
     }
+    blocks.clear();
 }
 
 // Memory_Module::Memory_Module()
@@ -150,7 +151,7 @@ void History_Table::print_curmem()
     return;
 }
 
-HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix)
+HistoryNode *History_Table::insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned int thread_id)
 {
     int group_index = get_bucket_index(depth);
 
@@ -165,12 +166,12 @@ HistoryNode *History_Table::insert(PrefixKey &key, int prefix_cost, int lower_bo
     spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
 
-    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, backtracked, is_best_suffix);
+    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, state);
     lock.unlock();
     return entry == NULL ? NULL : &entry->node;
 }
 
-HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix, bool *inserted)
+HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned thread_id, bool *inserted)
 {
     int group_index = get_bucket_index(depth);
     *inserted = false;
@@ -190,13 +191,13 @@ HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, int prefix_cost, 
         return &found_entry->node;
     }
 
-    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, backtracked, is_best_suffix);
+    PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, state);
     lock.unlock();
     *inserted = true;
     return entry == NULL ? NULL : &entry->node;
 }
 
-HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
+HistoryNode *History_Table::retrieve(PrefixKey &key, unsigned int depth)
 {
     if (depth < gp_depth) return NULL;
     int group_index = get_bucket_index(depth);
@@ -211,53 +212,32 @@ HistoryNode *History_Table::retrieve(PrefixKey &key, int depth)
     return &entry->node;
 }
 
-SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth)
+
+SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id)
 {
     if (!enable_subpath_history_table) return NULL;
     int group_index = get_bucket_index(depth);
 
     if (blocked_groups[group_index])
         return NULL;
-
+    
     SubpathMap &map = subpath_maps[group_index];
 
-    if (thread_id % 4 == 0)
-    {
-        insert_count++;
-        if (insert_count >= 100000)
-        {
-            current_size = total_ram - get_free_mem();
-            insert_count = 0;
-        }
-    }
-
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
-    int bucket = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
+    int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
 
-    spin_lock &lock = map.locks[bucket / COVER_AREA];
+    spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
-    if (!is_data_available[group_index] || blocked_groups[group_index])
-    {
-        block_count[group_index]++;
-        lock.unlock();
-        return NULL;
-    }
 
-    SubpathEntry *entry = map.bucket_allocators[thread_id].allocate();
-    if (entry == NULL)
-        return NULL;
-
-    entry->key = key;
-    entry->node.subpath_cost = subpath_cost;
-    entry->next = map.buckets[bucket];
-    map.buckets[bucket] = entry;
+    SubpathEntry *entry = insert_subpath_entry(map, group_index, thread_id, bucket_index, key, subpath_cost);
     lock.unlock();
-    return &entry->node;
+    return entry == NULL ? NULL : &entry->node;
 }
 
 
-SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth, bool *inserted)
+SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted)
 {
+    if (!enable_subpath_history_table) return NULL;
     int group_index = get_bucket_index(depth);
     *inserted = false;
     if (!is_data_available[group_index]) return NULL;
@@ -282,47 +262,19 @@ SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, i
     return entry == NULL ? NULL : &entry->node;
 }
 
-SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, int depth)
+SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, unsigned int depth)
 {
     if (!enable_subpath_history_table) return NULL;
     int group_index = get_bucket_index(depth);
-
-    if (!is_data_available[group_index])
-        return NULL;
+    if (!is_data_available[group_index]) return NULL;
+    SubpathMap &map = subpath_maps[group_index];
 
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
 
-    SubpathMap &map = subpath_maps[group_index];
-
-    SubpathEntry *bucket = map.buckets[bucket_index];
-    if (bucket == NULL) {
-        return NULL;
-
-    } else if (bucket->next == NULL) {
-        if (
-            key.first_node == bucket->key.first_node &&
-            key.last_node == bucket->key.last_node &&
-            key.bit_vector == bucket->key.bit_vector
-        ) {
-            return &bucket->node;
-        } else {
-            return NULL;
-        }
-
-    }
-    if (is_data_available[group_index])
-        for (SubpathEntry *entry = bucket; entry != NULL; entry = entry->next) {
-            if (
-                key.first_node == entry->key.first_node &&
-                key.last_node == entry->key.last_node &&
-                key.bit_vector == entry->key.bit_vector
-            ) {
-                return &entry->node;
-            }
-        }
-
-    return NULL;
+    SubpathEntry *entry = search_subpath_bucket(map.buckets[bucket_index], key);
+    if (entry == NULL) return NULL;
+    return &entry->node;
 }
 
 PrefixEntry *History_Table::search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key)
@@ -379,7 +331,7 @@ SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, Subpat
     return NULL;
 }
 
-PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, bool backtracked, bool is_best_suffix)
+PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, HistoryNodeState state)
 {
     if (thread_id % 4 == 0)
     {
@@ -402,10 +354,10 @@ PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index,
         return NULL;
     
     entry->key = key;
-    entry->node.explored = backtracked;
-    entry->node.entry.store({prefix_cost, lower_bound});
-    entry->node.active_threadID = thread_id;
-    entry->node.is_best_suffix = is_best_suffix;
+    entry->node.prefix_cost = prefix_cost;
+    entry->node.lower_bound = lower_bound;
+    entry->node.state = state;
+    entry->node.active_thread = thread_id;
     entry->next = map.buckets[bucket_index];
     map.buckets[bucket_index] = entry;
     return entry;
@@ -629,6 +581,8 @@ void History_Table::track_entries_and_references()
 
 int History_Table::get_bucket_index(int depth)
 {
+    if (num_of_groups <= 1)
+        return 0;
     if (depth <= gp_depth)
         return 0;
     else if (depth <= num_of_groups * groups_size + gp_depth)

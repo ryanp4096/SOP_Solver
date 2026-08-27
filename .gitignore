@@ -11,3 +11,6 @@ sop_trace
 
 # for yaml files produced by trace analysis representing the difference tree when comparing two traces
 *.trace.yaml
+
+# for temporary config file, change parameters for individual runs without being tracked on git
+temp_config.txt

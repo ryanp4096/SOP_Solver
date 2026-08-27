@@ -15,22 +15,32 @@ struct PrefixKey
 	int last_node;
 };
 
-struct HistoryContent
-{
-	int32_t prefix_cost = -1; // the cost of the current path represented by this node
-	int32_t lower_bound = -1; // the lower bound cost of a solution starting with this path
+// struct HistoryContent
+// {
+// 	int32_t prefix_cost = -1; // the cost of the current path represented by this node
+// 	int32_t lower_bound = -1; // the lower bound cost of a solution starting with this path
+// };
+
+enum HistoryNodeState : uint8_t {
+	UNEXPLORED, EXPLORING, EXPLORED
 };
 
 /* A single node in the history table. */
 struct HistoryNode
 {
-	atomic<bool> explored;			 // if the subspace under this node has already been fully explored
-	// atomic<bool> referred;			 // if the subspace under this node has already been referred
-	atomic<bool> is_best_suffix;
-	// int level;
-	atomic<uint8_t> active_threadID; // the thread that is exploring this subspace (there can only ever be one, because any others would be stopped)
-	atomic<HistoryContent> entry;
-	spin_lock lock;
+	int32_t prefix_cost = -1;
+	int32_t lower_bound = -1;
+	HistoryNodeState state = UNEXPLORED;
+	int8_t active_thread = -1;
+	spin_lock lock{};
+
+	// atomic<bool> explored;			 // if the subspace under this node has already been fully explored
+	// // atomic<bool> referred;			 // if the subspace under this node has already been referred
+	// atomic<bool> is_best_suffix;
+	// // int level;
+	// atomic<uint8_t> active_threadID; // the thread that is exploring this subspace (there can only ever be one, because any others would be stopped)
+	// atomic<HistoryContent> entry;
+	// spin_lock lock;
 };
 
 struct Active_Node
@@ -52,7 +62,7 @@ struct SubpathKey
 
 struct SubpathHistoryNode
 {
-    uint32_t subpath_cost;
+    atomic<uint32_t> subpath_cost;
 	// uint32_t active_threads;
 	// bool in_best_solution;
 	spin_lock lock;

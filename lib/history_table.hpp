@@ -32,7 +32,7 @@ typedef atomic<PrefixEntry *> PrefixBucket;
 template <typename T>
 class MemoryAllocator {
 private:
-    vector<T *> blocks;
+    vector<T *> blocks{};
     unsigned int items_count = 0;
     unsigned int items_per_block;
 public:
@@ -96,7 +96,7 @@ struct PrefixMap {
 class History_Table
 {
 private:
-    unsigned num_buckets = 0;                        // the number of buckets the history table should be stored in
+    size_t num_buckets = 0;                        // the number of buckets the history table should be stored in
     // vector<vector<Bucket *>> map;                    // the collection of history nodes
     // vector<vector<spin_lock>> table_lock;            // a read-write lock for every X adjacent buckets, defined by COVER_AREA
     // vector<vector<Memory_Module>> memory_allocators; // a memory allocator for each thread, in order to reduce synchronization overhead
@@ -146,16 +146,16 @@ public:
         backtracked - whether the subspace under this node has already been explored
         depth - the depth of this node (size of the current partial path)
         Return- a pointer to the node created */
-    HistoryNode *insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix);
+    HistoryNode *insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned int thread_id);
     /* Find a history table entry based on a specific key.
         key - the history key corresponding to the partial path this entry represents
         Return- a pointer to the node found, if any */
-    HistoryNode *retrieve(PrefixKey &key, int depth);
-    HistoryNode *retrieve_or_insert(PrefixKey &key, int prefix_cost, int lower_bound, unsigned thread_id, bool backtracked, unsigned depth, int temp_group_size, bool is_best_suffix, bool *inserted);
+    HistoryNode *retrieve(PrefixKey &key, unsigned int depth);
+    HistoryNode *retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned thread_id, bool *inserted);
 
-    SubpathHistoryNode *insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth);
-    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, int depth);
-    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, int subpath_cost, unsigned int thread_id, unsigned int depth, bool *inserted);
+    SubpathHistoryNode *insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id);
+    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, unsigned int depth);
+    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted);
 
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
     bool free_subtable_memory(float *mem_limit); // free the history table memory
@@ -166,7 +166,7 @@ public:
 private:
     PrefixEntry *search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key);
     SubpathEntry *search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key);
-    PrefixEntry *insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, bool backtracked, bool is_best_suffix);
+    PrefixEntry *insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, HistoryNodeState state);
     SubpathEntry *insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost);
 };
 

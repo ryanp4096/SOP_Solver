@@ -101,6 +101,10 @@ private:
     // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
     // Safe because each thread gets its own solver instance
     std::deque<path_node> ready_list;
+    // Reuse subpath bit vector and subpath key to avoid repeated allocations
+    SubpathKey subpath_key{
+        .bit_vector{}
+    };
     
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
