@@ -48,30 +48,37 @@ private:
 public:
     void initialize(int thread_count)
     {
+        #ifdef ENABLE_CPU_TIMER
         this->thread_count = thread_count;
         data.assign(thread_count, std::array<marker_data, marker_count>{});
+        #endif
     }
 
     inline void start(marker m, int thread_id)
     {
+        #ifdef ENABLE_CPU_TIMER
         uint64_t *d = &data[thread_id][m].start;
         _mm_lfence();
         *d = __rdtsc();
         _mm_lfence();
+        #endif
     }
 
     inline void stop(marker m, int thread_id)
     {
+        #ifdef ENABLE_CPU_TIMER
         unsigned temp;
         uint64_t end = __rdtscp(&temp);
         _mm_lfence();
         marker_data &d = data[thread_id][m];
         d.count++;
         d.time += end - d.start;
+        #endif
     }
 
     void print_results()
     {
+        #ifdef ENABLE_CPU_TIMER
         std::cout << "------ CPU TIMER RESULTS ------" << std::endl;
         for (int marker = 0; marker < marker_count; marker++) {
             uint64_t time = 0;
@@ -88,6 +95,7 @@ public:
             std::cout << "Total: " << time << std::endl;
         }
         std::cout << "-------------------------------" << std::endl;
+        #endif
     }
 };
 

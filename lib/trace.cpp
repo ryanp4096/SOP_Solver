@@ -1,6 +1,6 @@
 #include "trace.hpp"
 
-#ifndef DISABLE_TRACE
+#ifdef ENABLE_TRACE
 
 Trace::Trace() {
     opened = false;

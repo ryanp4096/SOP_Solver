@@ -318,7 +318,7 @@ void log_node(int thread, sop_state& problem_state, MatchInfo& match_info, NodeA
 }
 
 void trace_match_check(Trace& trace, sop_state& problem_state, MatchInfo& match_info) {
-    #ifndef DISABLE_TRACE
+    #ifdef ENABLE_TRACE
     if (!trace.is_open()) return;
     if (!match_info.available) {
         trace.write_detail(MATCH_NOT_AVAILABLE, 1);
@@ -339,7 +339,7 @@ void trace_match_check(Trace& trace, sop_state& problem_state, MatchInfo& match_
 }
 
 void trace_initial_state(Trace& trace, sop_state *problem_state) {
-    #ifndef DISABLE_TRACE
+    #ifdef ENABLE_TRACE
     if (!trace.is_open()) return;
     for (int i = 0; i < problem_state->current_path.size(); i++) {
         trace.write_node(problem_state->current_path.at(i));
@@ -376,7 +376,7 @@ void print_diagnostics()
 
 void solver::enable_trace(string path)
 {
-    #ifndef DISABLE_TRACE
+    #ifdef ENABLE_TRACE
     trace_enabled = true;
     size_t ext_index = path.find_last_of('.');
     if (ext_index == string::npos || path.length() - ext_index > 5) {
