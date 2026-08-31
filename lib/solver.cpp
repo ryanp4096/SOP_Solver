@@ -564,7 +564,7 @@ void solver::solve(string f_name, int thread_num)
 
     // thread_load = new load_stats [thread_total];
     local_pools = new local_pool(thread_total + 1);
-    history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size);
+    history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, enable_subpath_history_table);
     ctimer.initialize(thread_total + 1);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)

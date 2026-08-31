@@ -98,8 +98,9 @@ History_Table::History_Table(size_t size)
     insert_count = 0;
 }
 
-void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size, bool enable_subpath_history_table)
+void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size, timer *main_timer, bool enable_subpath_history_table)
 {
+    this->main_timer = main_timer;
     this->enable_subpath_history_table = enable_subpath_history_table;
     num_of_groups = number_of_groups;
     groups_size = group_size;
@@ -333,6 +334,14 @@ SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, Subpat
 
 PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, HistoryNodeState state)
 {
+    if (limit_insertion) return NULL;
+    if (current_size >= max_size) {
+        limit_insertion = true;
+        double t = main_timer->get_time_seconds();
+        std::cout << "Blocking insertion at time " << t << std::endl;
+        return NULL;
+    }
+
     if (thread_id % 4 == 0)
     {
         insert_count++;
@@ -365,6 +374,14 @@ PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index,
 
 SubpathEntry *History_Table::insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost)
 {
+    if (limit_insertion) return NULL;
+    if (current_size >= max_size) {
+        limit_insertion = true;
+        double t = main_timer->get_time_seconds();
+        std::cout << "Blocking insertion at time " << t << std::endl;
+        return NULL;
+    }
+
     if (thread_id % 4 == 0)
     {
         insert_count++;

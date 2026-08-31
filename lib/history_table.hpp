@@ -5,6 +5,7 @@
 #include <list>
 
 #include "memory.hpp"
+#include "timer.hpp"
 
 // #include <boost/smart_ptr/detail/spinlock.hpp>
 #include <boost/dynamic_bitset.hpp>
@@ -119,6 +120,9 @@ private:
 
     vector<long> block_count;
 
+    bool limit_insertion = false;
+    timer *main_timer;
+
 public:
     /* Create a new history table object.
         size - the number of buckets the history table should be stored in */
@@ -126,7 +130,7 @@ public:
     /* Initialize the history table memory module (in parallel solver sets up one for each thread).
         thread_count -  the number of threads alloted to B&B enumeration
         node_count - the number of nodes in the cost graph */
-    void initialize(int thread_count, size_t size, int number_of_groups, int group_size, bool enable_subpath_history_table = true);
+    void initialize(int thread_count, size_t size, int number_of_groups, int group_size, timer *main_timer, bool enable_subpath_history_table = true);
     /* Returns the max allowed size of the history table, in bytes. */
     size_t get_max_size();
     /* Returns the current size of the history table, in bytes. */
