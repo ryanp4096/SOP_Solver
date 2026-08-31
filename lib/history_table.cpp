@@ -10,71 +10,6 @@ int gp_depth = 0;
 std::mutex mtx;
 std::condition_variable cv;
 
-template <typename T>
-MemoryAllocator<T>::~MemoryAllocator() {
-    free_all();
-}
-template <typename T>
-T *MemoryAllocator<T>::allocate() {
-    if (blocks.empty() || items_count >= items_per_block) {
-        T *block = new T[items_per_block];
-        blocks.push_back(block);
-        items_count = 1;
-        return block;
-    } else {
-        return &blocks.back()[items_count++];
-    }
-}
-
-template<typename T>
-void MemoryAllocator<T>::free_all() {
-    for (T *b : blocks) {
-        delete[] b;
-    }
-    blocks.clear();
-}
-
-// Memory_Module::Memory_Module()
-// {
-//     bucket_block = new Bucket[BUCKET_BLK_SIZE];
-//     history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-//     bucket_counter = 0;
-//     his_node_counter = 0;
-// }
-// Memory_Module::~Memory_Module()
-// {
-//     // cout << "destructor triggered\n";
-//     delete[] bucket_block; // Use delete[] to free the array of Buckets
-//     free(history_block);   // Use free to deallocate memory allocated with malloc
-// }
-
-// Bucket *Memory_Module::get_bucket()
-// {
-//     if (bucket_counter >= BUCKET_BLK_SIZE || bucket_block == NULL)
-//     {
-//         bucket_block = new Bucket[BUCKET_BLK_SIZE];
-//         bucket_counter = 0;
-//     }
-//     Bucket *bucket = bucket_block + bucket_counter;
-//     bucket_counter++;
-//     return bucket;
-// }
-
-// HistoryNode *Memory_Module::retrieve_his_node()
-// {
-//     // HistoryNode* node = NULL;
-
-//     if (his_node_counter >= HIS_BLK_SIZE || history_block == NULL)
-//     {
-//         history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-//         his_node_counter = 0;
-//     }
-//     HistoryNode *node = history_block + his_node_counter;
-//     his_node_counter++;
-
-//     return node;
-// }
-
 History_Table::History_Table(size_t size)
 {
     // struct sysinfo info;
@@ -118,12 +53,12 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
 
     for (int i = 0; i < number_of_groups; i++)
     {
-        prefix_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<PrefixEntry>(BUCKET_BLK_SIZE));
+        prefix_maps[i].bucket_allocators.resize(thread_num, BUCKET_BLK_SIZE);
         prefix_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
         prefix_maps[i].buckets = vector<PrefixBucket>(size);
 
         if (enable_subpath_history_table) {
-            subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
+            subpath_maps[i].bucket_allocators.resize(thread_num, BUCKET_BLK_SIZE);
             subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
             subpath_maps[i].buckets = vector<SubpathBucket>(size);
         }
@@ -349,10 +284,10 @@ PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index,
         return NULL;
     }
 
-    PrefixEntry *entry = map.bucket_allocators[thread_id].allocate();
+    PrefixEntry *entry = map.bucket_allocators[thread_id].allocate(1);
     if (entry == NULL)
         return NULL;
-    
+
     entry->key = key;
     entry->node.prefix_cost = prefix_cost;
     entry->node.lower_bound = lower_bound;
@@ -381,7 +316,7 @@ SubpathEntry *History_Table::insert_subpath_entry(SubpathMap &map, int group_ind
         return NULL;
     }
 
-    SubpathEntry *entry = map.bucket_allocators[thread_id].allocate();
+    SubpathEntry *entry = map.bucket_allocators[thread_id].allocate(1);
     if (entry == NULL)
         return NULL;
     
@@ -508,10 +443,10 @@ bool History_Table::free_subtable_memory(float *mem_limit)
 
                 std::cout << "current used size before (in bytes): " << current_size / 1048576 << " MB" << std::endl;
 
-                for (MemoryAllocator<PrefixEntry> &allocator : prefix_maps[i].bucket_allocators)
-                {
-                    allocator.free_all();
-                }
+                // for (MemoryAllocator<PrefixEntry> &allocator : prefix_maps[i].bucket_allocators)
+                // {
+                //     allocator.free_all();
+                // }
 
                 std::cout << "Freed memory for subtable: " << i + 1 << std::endl;
 

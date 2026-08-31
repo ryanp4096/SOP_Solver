@@ -5,6 +5,7 @@
 #include <list>
 
 #include "memory.hpp"
+#include "allocator.hpp"
 
 // #include <boost/smart_ptr/detail/spinlock.hpp>
 #include <boost/dynamic_bitset.hpp>
@@ -26,27 +27,6 @@ struct PrefixEntry {
 };
 typedef atomic<PrefixEntry *> PrefixBucket;
 
-/**
- * Allocates memory for a given type. Used when frequently allocating memory for a given type to prevent high number of memory allocations, by allocating one large block of memory at a time.
- */
-template <typename T>
-class MemoryAllocator {
-private:
-    vector<T *> blocks{};
-    unsigned int items_count = 0;
-    unsigned int items_per_block;
-public:
-    MemoryAllocator(unsigned int items_per_block = HIS_BLK_SIZE)
-        : items_per_block(items_per_block) {}
-    ~MemoryAllocator();
-    /**
-     * Allocate memory to store type T
-     */
-    T *allocate();
-
-    void free_all();
-};
-
 struct SubpathEntry {
     SubpathKey key;
     SubpathHistoryNode node;
@@ -57,12 +37,12 @@ typedef atomic<SubpathEntry *> SubpathBucket;
 struct SubpathMap {
     vector<SubpathBucket> buckets;
     vector<spin_lock> locks;
-    vector<MemoryAllocator<SubpathEntry>> bucket_allocators;
+    vector<MemoryPool<SubpathEntry>> bucket_allocators;
 };
 struct PrefixMap {
     vector<PrefixBucket> buckets;
     vector<spin_lock> locks;
-    vector<MemoryAllocator<PrefixEntry>> bucket_allocators;
+    vector<MemoryPool<PrefixEntry>> bucket_allocators;
 };
 
 
