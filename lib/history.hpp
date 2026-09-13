@@ -21,8 +21,8 @@ struct PrefixKey
 // 	int32_t lower_bound = -1; // the lower bound cost of a solution starting with this path
 // };
 
-enum HistoryNodeState : uint8_t {
-	UNEXPLORED, EXPLORING, EXPLORED
+enum NodeState : uint8_t {
+	UNEXPLORED, EXPLORING, EXPLORED, STOPPED, STOLEN
 };
 
 /* A single node in the history table. */
@@ -30,7 +30,7 @@ struct HistoryNode
 {
 	int32_t prefix_cost = -1;
 	int32_t lower_bound = -1;
-	HistoryNodeState state = UNEXPLORED;
+	NodeState state = UNEXPLORED;
 	int8_t active_thread = -1;
 	spin_lock lock{};
 

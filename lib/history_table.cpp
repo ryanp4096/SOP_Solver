@@ -152,7 +152,7 @@ void History_Table::print_curmem()
     return;
 }
 
-HistoryNode *History_Table::insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned int thread_id)
+HistoryNode *History_Table::insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, NodeState state, unsigned int thread_id)
 {
     int group_index = get_bucket_index(depth);
 
@@ -172,7 +172,7 @@ HistoryNode *History_Table::insert(PrefixKey &key, unsigned int depth, int prefi
     return entry == NULL ? NULL : &entry->node;
 }
 
-HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned thread_id, bool *inserted)
+HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, NodeState state, unsigned thread_id, bool *inserted)
 {
     int group_index = get_bucket_index(depth);
     *inserted = false;
@@ -332,7 +332,7 @@ SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, Subpat
     return NULL;
 }
 
-PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, HistoryNodeState state)
+PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, NodeState state)
 {
     if (limit_insertion) return NULL;
     if (current_size >= max_size) {

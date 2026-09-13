@@ -43,14 +43,14 @@ public:
 class path_node
 {
 public:
-    std::vector<int> sequence; // the partial path represented by this node in the enumeration tree
+    std::vector<int> sequence{}; // the partial path represented by this node in the enumeration tree
     int lower_bound = -1;      // the lower bound cost of a complete path beginning with sequence
     int origin_node = -1;      // the first node in this path, after the virtual starting node, used to evenly distribute threads between subspaces in solve_parallel
     // int parent_lv = -1;
     // bool* invalid_ptr = NULL; //investigate
     // bool deprecated = false; //For Thread Stopping. if this node exists in a redundant subspace and so does not need to be processed
     unsigned long long current_node_value = -1; // the portion out of ULLONG_MAX of the working tree that is under this node
-    PrefixKey history_key;
+    PrefixKey history_key{.bit_vector{}};
     // std::vector<Subpath> subpaths;
     
 

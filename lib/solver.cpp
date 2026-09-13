@@ -563,7 +563,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Instance size is " << instance_size - 2 << std::endl;
 
     // thread_load = new load_stats [thread_total];
-    local_pools = new local_pool(thread_total + 1);
+    local_pools = new local_pool(thread_total + 1, instance_size);
     history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, enable_subpath_history_table);
     ctimer.initialize(thread_total + 1);
     // thread_requests.resize(thread_total);
@@ -1559,6 +1559,7 @@ void solver::processBestTour()
 void solver::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
+    local_pools->thread(thread_id).initial_state(problem_state.current_path, problem_state.history_key.bit_vector);
     if (trace_enabled) {
         string path;
         if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
@@ -1884,8 +1885,9 @@ void solver::enumerate()
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
-                path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
-                ready_list.push_back(temp);
+                // path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
+                local_pools->thread(thread_id).push(taken_node, lower_bound);
+                // ready_list.push_back(temp);
                 problem_state.current_path.pop_back();
                 problem_state.current_cost -= edge_weight; // Use cached value
                 problem_state.history_key.bit_vector[taken_node] = false;
@@ -1902,10 +1904,11 @@ void solver::enumerate()
         work_remaining[thread_id] -= next_work_above * pruned_count + remainder;
 
         // COMMENT: Assigning work remaining for each path_node object in ready list
-        for (unsigned i = 0; i < ready_list.size(); i++)
-        {
-            ready_list[i].current_node_value = next_work_above;
-        }
+        // for (unsigned i = 0; i < ready_list.size(); i++)
+        // {
+        //     ready_list[i].current_node_value = next_work_above;
+        // }
+        local_pools->thread(thread_id).set_work(next_work_above);
 
         // DIAGNOSTIC: enum_nodes
         enumerated_nodes[thread_id] += ready_node_count;
@@ -1915,16 +1918,17 @@ void solver::enumerate()
 
         // Sort the ready list and push into local pool
         ctimer.start(cpu_timer::POOL_SORT, thread_id);
-        if (!ready_list.empty())
-            std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
-        local_pools->push_list(thread_id, ready_list);
+        // if (!ready_list.empty())
+        //     std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
+        // local_pools->push_list(thread_id, ready_list);
+        local_pools->thread(thread_id).sort();
         ctimer.stop(cpu_timer::POOL_SORT, thread_id);
 
         int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
 
         /* Begin enumeration. */
-        path_node active_node;
-        while (local_pools->pop_from_active_list(thread_id, active_node))
+        path_node active_node{};
+        while (local_pools->thread(thread_id).pop(active_node))
         {
             trace.write_node(active_node.sequence.back());
             ctimer.start(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
@@ -1950,6 +1954,7 @@ void solver::enumerate()
                 continue; // enumeration-time backtracking, and other preprocessing
 
             /* Take */
+            local_pools->thread(thread_id).activate(active_node.sequence.back());
             int src = problem_state.current_path.back();  // the number of the predecessor to the node being considered
             int taken_node = active_node.sequence.back(); // this node's number
             problem_state.current_path.push_back(taken_node);
@@ -1977,6 +1982,7 @@ void solver::enumerate()
             ctimer.start(cpu_timer::RECURSIVE_END, thread_id);
 
             /* Untake */
+            local_pools->thread(thread_id).deactivate();
             problem_state.enumeration_depth--;
             // problem_state.suffix_cost????
             // current_hisnode = previous_hisnode;
@@ -1996,18 +2002,18 @@ void solver::enumerate()
                 {
                     time_out = true;
                     active_threads = 0;
-                    local_pools->pop_active_list(thread_id);
+                    // local_pools->thread(thread_id).deactivate();
                     return;
                 }
             }
             ctimer.stop(cpu_timer::RECURSIVE_END, thread_id);
         }
         trace.write_end_list();
-        while (local_pools->pop_from_active_list(thread_id, active_node))
+        while (local_pools->thread(thread_id).pop(active_node))
         {
             work_remaining[thread_id] -= active_node.current_node_value;
         }
-        local_pools->pop_active_list(thread_id); // TODO: make sure with thread stopping that this is handled properly
+        // local_pools->thread(thread_id).deactivate(); // TODO: make sure with thread stopping that this is handled properly
         // if (stop_init && (int)problem_state.cur_solution.size() <= stop_depth) {
         //     stop_init = false;
         //     stop_depth = -1;
@@ -2732,14 +2738,14 @@ bool solver::workload_request()
 
         // std::cout << "ERROR!!! thread " << thread_id << " at workstealing with " << work_remaining[thread_id] << " work remaining" << endl;
     }
-    local_pools->set_pool_depth(thread_id, INT32_MAX);
+    // local_pools->set_pool_depth(thread_id, INT32_MAX);
     if (!global_pool.empty())
     {
         global_pool_lock.lock();
         if (!global_pool.empty())
         {
             problem_state = generate_solver_state(global_pool.back());
-            local_pools->set_pool_depth(thread_id, 0);
+            // local_pools->set_pool_depth(thread_id, 0);
             global_pool.pop_back();
             if (global_pool.empty())
             {
@@ -2762,6 +2768,7 @@ bool solver::workload_request()
             gp_remaining = global_pool.size();
             global_pool_lock.unlock();
 
+            local_pools->thread(thread_id).initial_state(problem_state.current_path, problem_state.history_key.bit_vector);
             trace_initial_state(trace, &problem_state);
             return true;
         }
@@ -2772,10 +2779,16 @@ bool solver::workload_request()
     if (enable_workstealing)
     {
         timer t;
-        path_node new_node;
+        path_node new_node{};
         int misses = 0;
+        int mt = 32;
         while (true)
         {
+            if (misses > 100000) return false;
+            if (misses >= mt) {
+                cout << "Thread: " << thread_id << " Misses: " << misses << endl;
+                mt *= 10;
+            }
             if (active_threads <= 0)
             {
                 time_workstealing = time_workstealing + t.get_time_seconds();
@@ -2790,7 +2803,7 @@ bool solver::workload_request()
                 continue;
             }
             steal_attempts[target]++;
-            if (local_pools->pop_from_zero_list(target, new_node, thread_id))
+            if (local_pools->thread(target).steal(new_node))
             {
                 work_remaining[target] -= new_node.current_node_value;
                 problem_state = generate_solver_state(new_node);
@@ -2803,6 +2816,7 @@ bool solver::workload_request()
                 // steal_times_lock.lock();
                 // steal_times.push_back(main_timer.get_time_seconds());
                 // steal_times_lock.unlock();
+                local_pools->thread(thread_id).initial_state(problem_state.current_path, problem_state.history_key.bit_vector);
                 trace_initial_state(trace, &problem_state);
                 return true;
             }

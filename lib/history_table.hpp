@@ -150,12 +150,12 @@ public:
         backtracked - whether the subspace under this node has already been explored
         depth - the depth of this node (size of the current partial path)
         Return- a pointer to the node created */
-    HistoryNode *insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned int thread_id);
+    HistoryNode *insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, NodeState state, unsigned int thread_id);
     /* Find a history table entry based on a specific key.
         key - the history key corresponding to the partial path this entry represents
         Return- a pointer to the node found, if any */
     HistoryNode *retrieve(PrefixKey &key, unsigned int depth);
-    HistoryNode *retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned thread_id, bool *inserted);
+    HistoryNode *retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, NodeState state, unsigned thread_id, bool *inserted);
 
     SubpathHistoryNode *insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id);
     SubpathHistoryNode *retrieve_subpath(SubpathKey &key, unsigned int depth);
@@ -170,7 +170,7 @@ public:
 private:
     PrefixEntry *search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key);
     SubpathEntry *search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key);
-    PrefixEntry *insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, HistoryNodeState state);
+    PrefixEntry *insert_prefix_entry(PrefixMap &map, int group_index, unsigned int thread_id, size_t bucket_index, PrefixKey &key, int prefix_cost, int lower_bound, NodeState state);
     SubpathEntry *insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost);
 };
 
