@@ -50,6 +50,7 @@ static bool enable_process_lkh_subpaths = true;
 static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
 static bool enable_manual_match_check = false;
 static bool enable_subpath_history_table = true;
+static int subpath_length_limit = INT_MAX;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -458,6 +459,7 @@ void solver::assign_parameter(Config config)
     trace_detail_level = static_cast<TraceDetailLevel>(config.trace_detail_level);
     enable_manual_match_check = config.enable_manual_match_check || (trace_enabled && config.trace_detail_level == DETAIL_NORMAL);
     enable_subpath_history_table = config.enable_subpath_history_table;
+    subpath_length_limit = config.subpath_length_limit;
 
     return;
 }
@@ -1861,7 +1863,11 @@ void solver::enumerate()
 
                     subpath_d->threads[thread_id].nodes++;
                     
-                    for (int length = 2; length < problem_state.current_path.size(); length++) {
+                    int length_limit = problem_state.current_path.size() - 1;
+                    if (subpath_length_limit != 0 && subpath_length_limit < length_limit) length_limit = subpath_length_limit;
+                    if (length_limit < 4) length_limit = 0; // if length limit is shorter than the shortest possible subpath, don't check subpaths at all
+
+                    for (int length = 2; length <= length_limit; length++) {
                         int src = problem_state.current_path[problem_state.current_path.size() - length];
                         int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
                         subpath_key.bit_vector[src] = true;

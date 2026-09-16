@@ -5,6 +5,7 @@
 #include <string>
 #include <iostream>
 #include <algorithm>
+#include <climits>
 
 using namespace std;
 
@@ -65,6 +66,9 @@ struct Config {
 
     /* Enable separate history table for subpaths */
     bool enable_subpath_history_table = false;
+
+    /* Maximum length of subpaths included in subpath history table */
+    int subpath_length_limit = INT_MAX;
 
     /* UNUSED */
 

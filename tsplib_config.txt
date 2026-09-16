@@ -69,3 +69,6 @@ ENABLE_MANUAL_MATCH_CHECK = 0
 
 // Enable separate history table for subpaths (1 for enable, 0 for disable)
 ENABLE_SUBPATH_HISTORY_TABLE = 1
+
+// The maximum length of subpaths included in subpath history table (0 = no limit)
+SUBPATH_LENGTH_LIMIT = 0
