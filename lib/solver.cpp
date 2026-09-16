@@ -165,6 +165,10 @@ static vector<unsigned long long> enumerated_nodes; // total number of nodes pro
 static vector<vector<unsigned long long>> enumerated_nodes_by_depth;
 static vector<unsigned long long> pruned_nodes;
 static vector<vector<unsigned long long>> pruned_nodes_by_depth;
+
+#include "subpath_diagnostics.hpp"
+static subpath_data *subpath_d;
+
 static atomic<unsigned long long> not_best_suffix_count(0);
 static atomic<int> times_work_stolen;
 static atomic<int> steal_misses;
@@ -566,6 +570,7 @@ void solver::solve(string f_name, int thread_num)
     local_pools = new local_pool(thread_total + 1);
     history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, enable_subpath_history_table);
     ctimer.initialize(thread_total + 1);
+    subpath_d = new subpath_data(thread_total + 1, instance_size);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
     // {
@@ -697,6 +702,8 @@ void solver::solve(string f_name, int thread_num)
             nodes_before_lkh_processed_sum += nodes_before_lkh_processed[i];
         std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
     }
+
+    subpath_d->print_results();
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -1851,6 +1858,8 @@ void solver::enumerate()
                     subpath_key.last_node = taken_node;
                     int subpath_cost = 0;
                     bool pruned = false;
+
+                    subpath_d->threads[thread_id].nodes++;
                     
                     for (int length = 2; length < problem_state.current_path.size(); length++) {
                         int src = problem_state.current_path[problem_state.current_path.size() - length];
@@ -1859,25 +1868,49 @@ void solver::enumerate()
                         subpath_cost += cost_graph[src][dst].weight;
                         if (length < 4) continue;
 
+                        subpath_d->threads[thread_id].checks++;
+                        subpath_d->threads[thread_id].by_depth[length].checks++;
+
                         subpath_key.first_node = src;
                         bool inserted;
                         SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
-                        if (!inserted) {
+                        if (inserted) {
+                            /* Subpath not found in history table (inserted) */
+                            subpath_d->threads[thread_id].checks_no_match++;
+                            subpath_d->threads[thread_id].by_depth[length].checks_no_match++;
+
+                        } else {
                             if (subpath_cost > history_node->subpath_cost) {
                                 /* Better subpath found in history table, prune */
                                 pruned_count++;
                                 prune(source_node, taken_node, edge_weight);
                                 pruned = true;
                                 log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
+
+                                subpath_d->threads[thread_id].nodes_pruned++;
+                                subpath_d->threads[thread_id].checks_pruned++;
+                                subpath_d->threads[thread_id].by_depth[length].checks_pruned++;
+
                                 ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
                                 break;
-                            } else {
+
+                            } else if (subpath_cost < history_node->subpath_cost) {
                                 /* This subpath is better than the one in history table, so update history table */
                                 history_node->subpath_cost = subpath_cost;
+                                // TODO stop inferior threads
+                                subpath_d->threads[thread_id].checks_improved++;
+                                subpath_d->threads[thread_id].by_depth[length].checks_improved++;
+
+                            } else {
+                                /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
+                                subpath_d->threads[thread_id].checks_equal++;
+                                subpath_d->threads[thread_id].by_depth[length].checks_equal++;
+                                
                             }
                         }
                     }
                     if (pruned) continue;
+                    subpath_d->threads[thread_id].nodes_not_pruned++;
                     ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
                 }
                 ctimer.start(cpu_timer::NODE_END, thread_id);
