@@ -98,18 +98,20 @@ History_Table::History_Table(size_t size)
     insert_count = 0;
 }
 
-void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size, timer *main_timer, bool enable_subpath_history_table)
+void History_Table::initialize(int thread_num, size_t size, int number_of_groups, int group_size, timer *main_timer, unsigned int instance_size, SubpathHistorySetting subpath_history_setting)
 {
     this->main_timer = main_timer;
-    this->enable_subpath_history_table = enable_subpath_history_table;
+    this->subpath_history_setting = subpath_history_setting;
     num_of_groups = number_of_groups;
     groups_size = group_size;
     block_count.resize(number_of_groups, 0);
 
     prefix_maps.resize(number_of_groups);
 
-    if (enable_subpath_history_table) {
+    if (subpath_history_setting == SUBPATHS_ON) {
         subpath_maps.resize(number_of_groups);
+    } else if (subpath_history_setting == SUBPATHS_LKH_ONLY) {
+        lkh_subpath_table.initialize(instance_size);
     }
 
     blocked_groups.resize(number_of_groups, false);
@@ -123,7 +125,7 @@ void History_Table::initialize(int thread_num, size_t size, int number_of_groups
         prefix_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
         prefix_maps[i].buckets = vector<PrefixBucket>(size);
 
-        if (enable_subpath_history_table) {
+        if (subpath_history_setting == SUBPATHS_ON) {
             subpath_maps[i].bucket_allocators.resize(thread_num, MemoryAllocator<SubpathEntry>(BUCKET_BLK_SIZE));
             subpath_maps[i].locks = vector<spin_lock>(size / COVER_AREA + 1);
             subpath_maps[i].buckets = vector<SubpathBucket>(size);
@@ -216,7 +218,12 @@ HistoryNode *History_Table::retrieve(PrefixKey &key, unsigned int depth)
 
 SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id)
 {
-    if (!enable_subpath_history_table) return NULL;
+    if (subpath_history_setting == SUBPATHS_OFF) return NULL;
+
+    if (subpath_history_setting == SUBPATHS_LKH_ONLY) {
+        return lkh_subpath_table.insert(key, depth, subpath_cost);
+    }
+
     int group_index = get_bucket_index(depth);
 
     if (blocked_groups[group_index])
@@ -236,13 +243,19 @@ SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int 
 }
 
 
-SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted)
+SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, bool *can_break)
 {
-    if (!enable_subpath_history_table) return NULL;
+    if (subpath_history_setting == SUBPATHS_OFF) return NULL;
+
+    if (subpath_history_setting == SUBPATHS_LKH_ONLY) {
+        *inserted = false;
+        return lkh_subpath_table.retrieve(key, depth, can_break);
+    }
+
     int group_index = get_bucket_index(depth);
     *inserted = false;
     if (!is_data_available[group_index]) return NULL;
-    if (blocked_groups[group_index]) return retrieve_subpath(key, depth);
+    if (blocked_groups[group_index]) return retrieve_subpath(key, depth, can_break);
     SubpathMap &map = subpath_maps[group_index];
     
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
@@ -263,9 +276,14 @@ SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, u
     return entry == NULL ? NULL : &entry->node;
 }
 
-SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, unsigned int depth)
+SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, unsigned int depth, bool *can_break)
 {
-    if (!enable_subpath_history_table) return NULL;
+    if (subpath_history_setting == SUBPATHS_OFF) return NULL;
+
+    if (subpath_history_setting == SUBPATHS_LKH_ONLY) {
+        return lkh_subpath_table.retrieve(key, depth, can_break);
+    }
+
     int group_index = get_bucket_index(depth);
     if (!is_data_available[group_index]) return NULL;
     SubpathMap &map = subpath_maps[group_index];

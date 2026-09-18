@@ -66,6 +66,53 @@ struct PrefixMap {
     vector<MemoryAllocator<PrefixEntry>> bucket_allocators;
 };
 
+class LKH_Subpath_Table {
+private:
+    struct LKHSubpathEntry {
+        SubpathKey key;
+        SubpathHistoryNode node;
+    };
+
+    bool data_available = false;
+    MemoryAllocator<LKHSubpathEntry> allocator{};
+    vector<vector<LKHSubpathEntry *>> data{};
+
+public:
+    void initialize(int instance_size) {
+        data.resize(instance_size);
+        for (int i = 0; i < instance_size; i++) {
+            data[i].resize(instance_size, nullptr);
+        }
+    }
+
+    SubpathHistoryNode *insert(SubpathKey &key, unsigned int length, int subpath_cost) {
+        LKHSubpathEntry *entry = allocator.allocate();
+        entry->key = key;
+        entry->node.subpath_cost = subpath_cost;
+        data[length][key.last_node] = entry;
+        return &entry->node;
+    }
+
+    void complete_insertion() {
+        data_available = true;
+    }
+
+    SubpathHistoryNode *retrieve(SubpathKey &key, unsigned int length, bool *can_break = NULL) {
+        if (can_break != NULL) *can_break = false;
+        if (!data_available) {
+            if (can_break != NULL) *can_break = true;
+            return NULL;
+        }
+        LKHSubpathEntry *entry = data[length][key.last_node];
+        if (entry == nullptr) {
+            if (can_break != NULL) *can_break = true;
+            return NULL;
+        }
+        if (entry->key.first_node != key.first_node) return NULL;
+        if (entry->key.bit_vector != key.bit_vector) return NULL;
+        return &entry->node;
+    }
+};
 
 // /* Manages memory allocation for the history table in blocks in order to reduce system call overhead. */
 // class Memory_Module
@@ -96,7 +143,15 @@ struct PrefixMap {
     For efficiency, the history table is allocated in buckets of many nodes, not individually. */
 class History_Table
 {
+public:
+    enum SubpathHistorySetting {
+        SUBPATHS_OFF, // do not store subpaths in the history table
+        SUBPATHS_LKH_ONLY, // only store subpaths of lkh's best tour in the history table. stored in a different format to speed up checking for matches
+        SUBPATHS_ON // store all subpaths in the history table
+    };
 private:
+    SubpathHistorySetting subpath_history_setting;
+
     size_t num_buckets = 0;                        // the number of buckets the history table should be stored in
     // vector<vector<Bucket *>> map;                    // the collection of history nodes
     // vector<vector<spin_lock>> table_lock;            // a read-write lock for every X adjacent buckets, defined by COVER_AREA
@@ -104,7 +159,7 @@ private:
 
     vector<PrefixMap> prefix_maps;
     vector<SubpathMap> subpath_maps;
-    bool enable_subpath_history_table;
+    LKH_Subpath_Table lkh_subpath_table; // special table only storing lkh best tour subpaths for faster access
 
     unsigned long total_ram = 0;        // the total amount of memory in the system, in bytes
     unsigned long max_size = 0;         // the maximum allowed size of the history table, in bytes
@@ -130,7 +185,7 @@ public:
     /* Initialize the history table memory module (in parallel solver sets up one for each thread).
         thread_count -  the number of threads alloted to B&B enumeration
         node_count - the number of nodes in the cost graph */
-    void initialize(int thread_count, size_t size, int number_of_groups, int group_size, timer *main_timer, bool enable_subpath_history_table = true);
+    void initialize(int thread_count, size_t size, int number_of_groups, int group_size, timer *main_timer, unsigned int instance_size, SubpathHistorySetting subpath_history_setting = SUBPATHS_OFF);
     /* Returns the max allowed size of the history table, in bytes. */
     size_t get_max_size();
     /* Returns the current size of the history table, in bytes. */
@@ -158,14 +213,15 @@ public:
     HistoryNode *retrieve_or_insert(PrefixKey &key, unsigned int depth, int prefix_cost, int lower_bound, HistoryNodeState state, unsigned thread_id, bool *inserted);
 
     SubpathHistoryNode *insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id);
-    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, unsigned int depth);
-    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted);
+    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, unsigned int depth, bool *can_break = NULL);
+    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, bool *can_break = NULL);
 
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
     bool free_subtable_memory(float *mem_limit); // free the history table memory
     void track_entries_and_references();         // to track down the entries and its reference in history_table
     int get_bucket_index(int depth);             // fetching the bucket index based on the depth of the newer entry
     void update_gp_depth(int gp_depth);          // updating the global pool entry size
+    void complete_lkh_subpath_insertion() { lkh_subpath_table.complete_insertion(); }
 
 private:
     PrefixEntry *search_prefix_bucket(PrefixBucket &bucket, PrefixKey &key);

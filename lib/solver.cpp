@@ -51,6 +51,7 @@ static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
 static bool enable_manual_match_check = false;
 static bool enable_subpath_history_table = true;
 static int subpath_length_limit = INT_MAX;
+static bool lkh_subpaths_only = false;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -460,6 +461,7 @@ void solver::assign_parameter(Config config)
     enable_manual_match_check = config.enable_manual_match_check || (trace_enabled && config.trace_detail_level == DETAIL_NORMAL);
     enable_subpath_history_table = config.enable_subpath_history_table;
     subpath_length_limit = config.subpath_length_limit;
+    lkh_subpaths_only = config.lkh_subpaths_only;
 
     return;
 }
@@ -570,7 +572,14 @@ void solver::solve(string f_name, int thread_num)
 
     // thread_load = new load_stats [thread_total];
     local_pools = new local_pool(thread_total + 1);
-    history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, enable_subpath_history_table);
+
+    History_Table::SubpathHistorySetting setting;
+    if (!enable_subpath_history_table) { setting = History_Table::SUBPATHS_OFF; }
+    else if (lkh_subpaths_only) { setting = History_Table::SUBPATHS_LKH_ONLY; }
+    else { setting = History_Table::SUBPATHS_ON; }
+
+    history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, instance_size, setting);
+
     ctimer.initialize(thread_total + 1);
     subpath_d = new subpath_data(thread_total + 1, instance_size);
     // thread_requests.resize(thread_total);
@@ -1475,17 +1484,22 @@ void solver::processBestTour()
                             .first_node = start,
                             .last_node = end
                         };
-                        bool inserted;
-                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpathKey, depth, subpath_cost, thread_id, &inserted);
-                        if (inserted) {
+                        if (lkh_subpaths_only) {
+                            history_table.insert_subpath(subpathKey, depth, subpath_cost, thread_id);
                             std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                         } else {
-                            int old_subpath_cost = history_node->subpath_cost;
-                            if (subpath_cost < old_subpath_cost) {
-                                history_node->subpath_cost = subpath_cost;
-                                std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                            bool inserted;
+                            SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpathKey, depth, subpath_cost, thread_id, &inserted);
+                            if (inserted) {
+                                std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                             } else {
-                                std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                                int old_subpath_cost = history_node->subpath_cost;
+                                if (subpath_cost < old_subpath_cost) {
+                                    history_node->subpath_cost = subpath_cost;
+                                    std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                                } else {
+                                    std::cout << "[processBestTour] Subpath Ignored - depth " << depth << " shift " << shift << " (entry: " << old_subpath_cost << ", lkh: " << subpath_cost << ")" << std::endl;
+                                }
                             }
                         }
                     }
@@ -1557,6 +1571,8 @@ void solver::processBestTour()
         }
         if (enable_manual_match_check)
             lkh_processed_by_depth = true;
+        if (enable_subpath_history_table && lkh_subpaths_only)
+            history_table.complete_lkh_subpath_insertion();
     }
     else
     {
@@ -1870,6 +1886,7 @@ void solver::enumerate()
                     for (int length = 2; length <= length_limit; length++) {
                         int src = problem_state.current_path[problem_state.current_path.size() - length];
                         int dst = problem_state.current_path[problem_state.current_path.size() - length + 1];
+                        subpath_key.first_node = src;
                         subpath_key.bit_vector[src] = true;
                         subpath_cost += cost_graph[src][dst].weight;
                         if (length < 4) continue;
@@ -1877,42 +1894,55 @@ void solver::enumerate()
                         subpath_d->threads[thread_id].checks++;
                         subpath_d->threads[thread_id].by_depth[length].checks++;
 
-                        subpath_key.first_node = src;
-                        bool inserted;
-                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
-                        if (inserted) {
-                            /* Subpath not found in history table (inserted) */
-                            subpath_d->threads[thread_id].checks_no_match++;
-                            subpath_d->threads[thread_id].by_depth[length].checks_no_match++;
+                        SubpathHistoryNode *history_node;
+                        if (lkh_subpaths_only) {
+                            bool can_break;
+                            history_node = history_table.retrieve_subpath(subpath_key, length, &can_break);
+                            if (history_node == NULL) {
+                                /* Subpath not found in history table */
+                                subpath_d->threads[thread_id].checks_no_match++;
+                                subpath_d->threads[thread_id].by_depth[length].checks_no_match++;
+                                if (can_break) break;
+                                continue;
+                            }
 
                         } else {
-                            if (subpath_cost > history_node->subpath_cost) {
-                                /* Better subpath found in history table, prune */
-                                pruned_count++;
-                                prune(source_node, taken_node, edge_weight);
-                                pruned = true;
-                                log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
-
-                                subpath_d->threads[thread_id].nodes_pruned++;
-                                subpath_d->threads[thread_id].checks_pruned++;
-                                subpath_d->threads[thread_id].by_depth[length].checks_pruned++;
-
-                                ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
-                                break;
-
-                            } else if (subpath_cost < history_node->subpath_cost) {
-                                /* This subpath is better than the one in history table, so update history table */
-                                history_node->subpath_cost = subpath_cost;
-                                // TODO stop inferior threads
-                                subpath_d->threads[thread_id].checks_improved++;
-                                subpath_d->threads[thread_id].by_depth[length].checks_improved++;
-
-                            } else {
-                                /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
-                                subpath_d->threads[thread_id].checks_equal++;
-                                subpath_d->threads[thread_id].by_depth[length].checks_equal++;
-                                
+                            bool inserted;
+                            history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
+                            if (inserted) {
+                                /* Subpath not found in history table (inserted) */
+                                subpath_d->threads[thread_id].checks_no_match++;
+                                subpath_d->threads[thread_id].by_depth[length].checks_no_match++;
+                                continue;
                             }
+                        }
+
+                        if (subpath_cost > history_node->subpath_cost) {
+                            /* Better subpath found in history table, prune */
+                            pruned_count++;
+                            prune(source_node, taken_node, edge_weight);
+                            pruned = true;
+                            log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
+
+                            subpath_d->threads[thread_id].nodes_pruned++;
+                            subpath_d->threads[thread_id].checks_pruned++;
+                            subpath_d->threads[thread_id].by_depth[length].checks_pruned++;
+
+                            ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
+                            break;
+
+                        } else if (subpath_cost < history_node->subpath_cost) {
+                            /* This subpath is better than the one in history table, so update history table */
+                            history_node->subpath_cost = subpath_cost;
+                            // TODO stop inferior threads
+                            subpath_d->threads[thread_id].checks_improved++;
+                            subpath_d->threads[thread_id].by_depth[length].checks_improved++;
+
+                        } else {
+                            /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
+                            subpath_d->threads[thread_id].checks_equal++;
+                            subpath_d->threads[thread_id].by_depth[length].checks_equal++;
+                            
                         }
                     }
                     if (pruned) continue;

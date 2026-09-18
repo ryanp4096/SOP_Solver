@@ -72,3 +72,6 @@ ENABLE_SUBPATH_HISTORY_TABLE = 1
 
 // The maximum length of subpaths included in subpath history table (0 = no limit)
 SUBPATH_LENGTH_LIMIT = 0
+
+// Store only subpaths of LKH's best tour in the history table for faster processing (0 = enable, 1 = disable)
+LKH_SUBPATHS_ONLY = 0
