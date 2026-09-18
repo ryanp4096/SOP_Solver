@@ -1868,7 +1868,7 @@ void solver::enumerate()
                 // }
 
                 /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
-                if (enable_subpath_history_table) {
+                if (enable_subpath_history_table && (!lkh_subpaths_only || lkh_entry_processed)) {
                     ctimer.start(cpu_timer::SUBPATH_HISTORY, thread_id);
                     subpath_key.bit_vector.reset();
                     subpath_key.bit_vector[taken_node] = true;
