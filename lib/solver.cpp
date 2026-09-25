@@ -567,7 +567,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << "Instance size is " << instance_size - 2 << std::endl;
 
     // thread_load = new load_stats [thread_total];
-    local_pools = new local_pool(thread_total + 1);
+    local_pools = new local_pool(thread_total + 1, instance_size);
     history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, enable_subpath_history_table);
     ctimer.initialize(thread_total + 1);
     subpath_d = new subpath_data(thread_total + 1, instance_size);
@@ -1566,6 +1566,7 @@ void solver::processBestTour()
 void solver::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
+    local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
     if (trace_enabled) {
         string path;
         if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
@@ -2765,14 +2766,12 @@ bool solver::workload_request()
 
         // std::cout << "ERROR!!! thread " << thread_id << " at workstealing with " << work_remaining[thread_id] << " work remaining" << endl;
     }
-    local_pools->thread(thread_id).set_pool_depth(INT32_MAX);
     if (!global_pool.empty())
     {
         global_pool_lock.lock();
         if (!global_pool.empty())
         {
             problem_state = generate_solver_state(global_pool.back());
-            local_pools->thread(thread_id).set_pool_depth(0);
             global_pool.pop_back();
             if (global_pool.empty())
             {
@@ -2794,7 +2793,7 @@ bool solver::workload_request()
             } // updating the variable to track how many of the threads completed the work assigned to them from the primary subspace
             gp_remaining = global_pool.size();
             global_pool_lock.unlock();
-
+            local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
             trace_initial_state(trace, &problem_state);
             return true;
         }
@@ -2836,6 +2835,7 @@ bool solver::workload_request()
                 // steal_times_lock.lock();
                 // steal_times.push_back(main_timer.get_time_seconds());
                 // steal_times_lock.unlock();
+                local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
                 trace_initial_state(trace, &problem_state);
                 return true;
             }

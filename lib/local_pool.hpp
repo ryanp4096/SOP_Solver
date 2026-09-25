@@ -13,11 +13,26 @@
     
     class local_pool_thread {
     private:
+        int instance_size;
         spin_lock lock{};
-        std::deque<std::deque<path_node>> pool{};
+        std::vector<std::deque<path_node>> pool;
+        int zero_depth{0};
         int depth{0};
 
     public:
+        local_pool_thread(int instance_size)
+            : instance_size{instance_size}, pool(instance_size) {}
+
+        local_pool_thread(const local_pool_thread &l)
+            : instance_size{l.instance_size}, lock{}, pool{l.pool}, zero_depth{l.zero_depth}, depth{l.depth} {}
+
+        local_pool_thread(local_pool_thread &&l)
+            : instance_size{l.instance_size}, lock{}, pool{std::move(l.pool)}, zero_depth{l.zero_depth}, depth{l.depth} {}
+
+        int level() { return depth - zero_depth; }
+
+        void initial_depth(int init_depth);
+
         /*Grabs a node from the shallowest / zero pool*/
         bool pop_from_zero_list(path_node &result_node);
         
@@ -29,18 +44,6 @@
         
         /*Removes active list once empty*/
         void pop_active_list();
-        
-        /* Determines if a specific thread's local pool is completely empty. */
-        bool out_of_work() { return pool.size() == 0; }
-        
-        //sets the relative depth of the pool
-        void set_pool_depth(int depth) { this->depth = depth; }
-
-        // diagnostic
-        int pool_size() { return pool.size(); }
-
-        // diagnostic
-        int active_pool_size() { return pool.back().size(); }
 
         // value is compared when choosing which thread to steal from
         unsigned long long node_value();
@@ -49,10 +52,17 @@
     class local_pool {
         private:
             int thread_count;
+            int instance_size;
             std::vector<local_pool_thread> threads;
 
         public:
-            local_pool(int thread_count);
+            local_pool(int thread_count, int instance_size)
+                : thread_count{thread_count}, instance_size{instance_size}, threads{}
+                {
+                    threads.reserve(thread_count);
+                    for (int i = 0; i < thread_count; i++)
+                        threads.push_back(local_pool_thread(instance_size));
+                }
 
             /* Returns a specific thread's local pool */
             local_pool_thread &thread(int thread_number) { return threads[thread_number]; }
