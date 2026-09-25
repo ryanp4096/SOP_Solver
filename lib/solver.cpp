@@ -1649,8 +1649,7 @@ void solver::enumerate()
         int ready_node_count = 0;
         int pruned_count = 0;
 
-        // Reuse member variable to avoid allocation/deallocation overhead
-        ready_list.clear();
+        local_pools->thread(thread_id).start_ready_list();
         // bool limit_insertion = false;
         for (int taken_node = 0; taken_node < instance_size; taken_node++)
         {
@@ -1918,8 +1917,11 @@ void solver::enumerate()
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
-                path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
-                ready_list.push_back(temp);
+                // path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
+                // ready_list.push_back(temp);
+                local_pools->thread(thread_id).ready_list().push_back(
+                    path_node(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key)
+                );
                 problem_state.current_path.pop_back();
                 problem_state.current_cost -= edge_weight; // Use cached value
                 problem_state.history_key.bit_vector[taken_node] = false;
@@ -1936,10 +1938,11 @@ void solver::enumerate()
         work_remaining[thread_id] -= next_work_above * pruned_count + remainder;
 
         // COMMENT: Assigning work remaining for each path_node object in ready list
-        for (unsigned i = 0; i < ready_list.size(); i++)
-        {
-            ready_list[i].current_node_value = next_work_above;
-        }
+        // for (unsigned i = 0; i < ready_list.size(); i++)
+        // {
+        //     ready_list[i].current_node_value = next_work_above;
+        // }
+        local_pools->thread(thread_id).ready_list().set_node_value(next_work_above);
 
         // DIAGNOSTIC: enum_nodes
         enumerated_nodes[thread_id] += ready_node_count;
@@ -1949,9 +1952,10 @@ void solver::enumerate()
 
         // Sort the ready list and push into local pool
         ctimer.start(cpu_timer::POOL_SORT, thread_id);
-        if (!ready_list.empty())
-            std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
-        local_pools->thread(thread_id).push_list(ready_list);
+        // if (!ready_list.empty())
+        //     std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
+        local_pools->thread(thread_id).ready_list().sort();
+        local_pools->thread(thread_id).push_ready_list();
         ctimer.stop(cpu_timer::POOL_SORT, thread_id);
 
         int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table

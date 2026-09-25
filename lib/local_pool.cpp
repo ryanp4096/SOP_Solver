@@ -1,5 +1,44 @@
 #include "local_pool.hpp"
 
+void local_pool_list::clear() {
+    queue.clear();
+    last_popped = -1;
+    present.reset();
+}
+
+void local_pool_list::pop_back() {
+    last_popped = queue.back();
+    queue.pop_back();
+}
+
+void local_pool_list::push_back(const path_node &node) {
+    int last_node = node.sequence.back();
+    present[last_node] = true;
+    nodes[last_node] = node;
+    queue.push_back(last_node);
+}
+
+void local_pool_list::push_back(path_node &&node) {
+    int last_node = node.sequence.back();
+    present[last_node] = true;
+    nodes[last_node] = node;
+    queue.push_back(last_node);
+}
+
+void local_pool_list::set_node_value(unsigned long long next_work_above) {
+    for (size_t i = 0; i < queue.size(); i++)
+        nodes[queue[i]].current_node_value = next_work_above;
+}
+
+void local_pool_list::sort() {
+    if (queue.empty()) return;
+    std::sort(
+        queue.begin(), queue.end(),
+        [&](int a, int b){ return nodes[a].lower_bound > nodes[b].lower_bound; }
+    );
+}
+
+
 void local_pool_thread::initial_depth(int init_depth) {
     lock.lock();
     zero_depth = init_depth;
@@ -47,13 +86,15 @@ bool local_pool_thread::pop_from_active_list(path_node &result_node)
     return true;
 };
 
-void local_pool_thread::push_list(const std::deque<path_node> &list)
+void local_pool_thread::start_ready_list()
+{
+    ready_list().clear();
+}
+
+void local_pool_thread::push_ready_list()
 {
     lock.lock();
-
-    pool[depth] = list;
     depth++;
-
     lock.unlock();
 };
 
@@ -70,13 +111,14 @@ unsigned long long local_pool_thread::node_value()
 {
     lock.lock();
     unsigned long long node_value = 0;
-    if (level() > 1 && pool[zero_depth].size() != 0)
+    if (level() > 1 && !pool[zero_depth].empty())
     {
         node_value = pool[zero_depth].back().current_node_value;
     }
     lock.unlock();
     return node_value;
 }
+
 
 int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigned long long>> &work_remaining, int stolen_from)
 {
