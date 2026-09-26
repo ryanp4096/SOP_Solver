@@ -105,6 +105,9 @@ private:
     SubpathKey subpath_key{
         .bit_vector{}
     };
+
+    // When a thread stop is matched for an earlier prefix in the current path, prune all the way down to that prefix
+    int prune_to_depth{-1};
     
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
@@ -209,7 +212,7 @@ private:
     void print_state(sop_state &state);
 
     // For checking, if any thread requested another thread to stop
-    bool check_stop_request(PrefixKey history_key, std::vector<int> sequence, bool *prefixPathMatched);
+    bool check_stop_request(const path_node &active_node, bool *prefixKeyMatched);
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);

@@ -55,6 +55,9 @@
 
         /* Sort queue by lower bound after all nodes have been added */
         void sort();
+
+        /* Find a specific path */
+        path_node *get(int last_node);
     };
 
     class local_pool_thread {
@@ -106,6 +109,9 @@
 
         // value is compared when choosing which thread to steal from
         unsigned long long node_value();
+
+        /* Find a specific path*/
+        path_node *get(int depth, int last_node);
     };
     
     class local_pool {

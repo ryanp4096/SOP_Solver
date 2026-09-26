@@ -38,6 +38,11 @@ void local_pool_list::sort() {
     );
 }
 
+path_node *local_pool_list::get(int last_node) {
+    if (!present[last_node]) return nullptr;
+    return &nodes[last_node];
+}
+
 
 void local_pool_thread::initial_depth(int init_depth) {
     lock.lock();
@@ -119,6 +124,11 @@ unsigned long long local_pool_thread::node_value()
     return node_value;
 }
 
+path_node *local_pool_thread::get(int depth, int last_node)
+{
+    if (depth > this->depth) return nullptr;
+    return pool[depth - 1].get(last_node);
+}
 
 int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigned long long>> &work_remaining, int stolen_from)
 {
