@@ -59,9 +59,10 @@ void local_pool_list::sort() {
     );
 }
 
-local_pool_node *local_pool_list::get(int last_node) {
-    if (!present[last_node]) return nullptr;
-    return &nodes[last_node];
+bool local_pool_list::get(int last_node, local_pool_node_ref &node) {
+    if (!present[last_node]) return false;
+    node = local_pool_node_ref(&nodes[last_node], thread, depth, last_node);
+    return true;
 }
 
 
@@ -95,13 +96,7 @@ bool local_pool_thread::pop_from_zero_list(path_node &result_node)
         return false;
     }
 
-    local_pool_node_ref node{
-        .node = &pool[zero_depth].back_node(),
-        .thread = this,
-        .taken_node = pool[zero_depth].back(),
-        .depth = zero_depth + 1
-    };
-    node.to_path_node(result_node);
+    pool[zero_depth].back().to_path_node(result_node);
     pool[zero_depth].pop_back();
 
     if (pool[zero_depth].empty())
@@ -118,12 +113,7 @@ bool local_pool_thread::pop_from_active_list(local_pool_node_ref &result_node)
     if (level() <= 0 || pool[depth - 1].empty())
         return false;
 
-    result_node = local_pool_node_ref{
-        .node = &pool[depth - 1].back_node(),
-        .thread = this,
-        .taken_node = pool[depth - 1].back(),
-        .depth = depth
-    };
+    result_node = pool[depth - 1].back();
     pool[depth - 1].pop_back();
 
     return true;
@@ -165,7 +155,7 @@ unsigned long long local_pool_thread::node_value()
     unsigned long long node_value = 0;
     if (level() > 1 && !pool[zero_depth].empty())
     {
-        node_value = pool[zero_depth].back_node().current_node_value;
+        node_value = pool[zero_depth].back().current_node_value();
     }
     lock.unlock();
     return node_value;
@@ -174,15 +164,7 @@ unsigned long long local_pool_thread::node_value()
 bool local_pool_thread::get(int depth, int last_node, local_pool_node_ref &result_node)
 {
     if (depth > this->depth) return false;
-    local_pool_node *node = pool[depth - 1].get(last_node);
-    if (node == nullptr) return false;
-    result_node = local_pool_node_ref{
-        .node = node,
-        .thread = this,
-        .taken_node = last_node,
-        .depth = depth
-    };
-    return true;
+    return pool[depth - 1].get(last_node, result_node);
 }
 
 void local_pool_thread::activate(int taken_node)

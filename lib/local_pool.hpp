@@ -23,13 +23,19 @@
     struct local_pool_node_ref {
         local_pool_node *node;
         local_pool_thread *thread;
-        int taken_node;
         int depth;
+        int taken_node;
+
+        local_pool_node_ref() {}
+
+        local_pool_node_ref(local_pool_node *node, local_pool_thread *thread, int depth, int taken_node)
+            : node{node}, thread{thread}, depth{depth}, taken_node{taken_node} {}
 
         inline int lower_bound() const { return node->lower_bound; }
         inline unsigned long long current_node_value() const { return node->current_node_value; }
         inline HistoryNode *history_node() const { return node->history_node; }
         inline int cost() const { return node->cost; }
+
         std::vector<int> sequence() const;
         boost::dynamic_bitset<> bit_vector() const;
         void to_path_node(path_node &node) const;
@@ -37,23 +43,19 @@
 
     class local_pool_list {
     private:
+        local_pool_thread *thread;
         int instance_size;
+        int depth;
         std::vector<local_pool_node> nodes;
         std::vector<int> queue{};
         boost::dynamic_bitset<> present;
     
     public:
-        local_pool_list(int instance_size)
-            : instance_size{instance_size}, nodes(instance_size), present(instance_size, false)
+        local_pool_list(int instance_size, int depth, local_pool_thread *thread)
+            : thread{thread}, instance_size{instance_size}, depth{depth}, nodes(instance_size), present(instance_size, false)
             { queue.reserve(instance_size); }
         
-        local_pool_list(const local_pool_list &l)
-            : instance_size{l.instance_size}, nodes{l.nodes}, queue{l.queue}, present{l.present}
-            { queue.reserve(instance_size); }
-
-        local_pool_list(local_pool_list &&l)
-            : instance_size{l.instance_size}, nodes{std::move(l.nodes)}, queue{std::move(l.queue)}, present{std::move(l.present)}
-            { queue.reserve(instance_size); }
+        void set_thread(local_pool_thread *thread) { this->thread = thread; }
         
         /* Empty the list */
         void clear();
@@ -61,10 +63,8 @@
         /* Check if the queue is empty */
         bool empty() { return queue.empty(); }
 
-        int back() { return queue.back(); }
-
         /* Get the next node in the queue */
-        local_pool_node &back_node() { return nodes[queue.back()]; }
+        local_pool_node_ref back() { return local_pool_node_ref(&nodes[queue.back()], thread, depth, queue.back()); }
 
         /* Pop a node from the queue */
         void pop_back() { queue.pop_back(); }
@@ -82,7 +82,7 @@
         void sort();
 
         /* Find a specific path */
-        local_pool_node *get(int last_node);
+        bool get(int last_node, local_pool_node_ref &node);
     };
 
     class local_pool_thread {
@@ -104,14 +104,22 @@
                 current_path.reserve(instance_size);
                 pool.reserve(instance_size);
                 for (int i = 0; i < instance_size; i++)
-                    pool.push_back(local_pool_list(instance_size));
+                    pool.push_back(local_pool_list(instance_size, i + 1, this));
             }
 
         local_pool_thread(const local_pool_thread &l)
-            : instance_size{l.instance_size}, lock{}, pool{l.pool}, current_path{l.current_path}, current_key{l.current_key}, zero_depth{l.zero_depth}, depth{l.depth} {}
+            : instance_size{l.instance_size}, lock{}, pool{l.pool}, current_path{l.current_path}, current_key{l.current_key}, zero_depth{l.zero_depth}, depth{l.depth}
+            {
+                for (local_pool_list &l : pool)
+                    l.set_thread(this);
+            }
 
         local_pool_thread(local_pool_thread &&l)
-            : instance_size{l.instance_size}, lock{}, pool{std::move(l.pool)}, current_path{std::move(l.current_path)}, current_key{std::move(l.current_key)}, zero_depth{l.zero_depth}, depth{l.depth} {}
+            : instance_size{l.instance_size}, lock{}, pool{std::move(l.pool)}, current_path{std::move(l.current_path)}, current_key{std::move(l.current_key)}, zero_depth{l.zero_depth}, depth{l.depth}
+            {
+                for (local_pool_list &l : pool)
+                    l.set_thread(this);
+            }
 
         /* The number of lists in the pool that contain */
         int level() { return depth - zero_depth; }
