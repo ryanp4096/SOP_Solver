@@ -1570,7 +1570,7 @@ void solver::processBestTour()
 void solver::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
-    local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
+    local_pools->thread(thread_id).initial_state(problem_state.current_path);
     if (trace_enabled) {
         string path;
         if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
@@ -1923,8 +1923,8 @@ void solver::enumerate()
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
                 // path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
                 // ready_list.push_back(temp);
-                local_pools->thread(thread_id).ready_list().push_back(
-                    path_node(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key, his_node, problem_state.current_cost)
+                local_pools->thread(thread_id).push_to_ready_list(
+                    taken_node, lower_bound, his_node, problem_state.current_cost
                 );
                 problem_state.current_path.pop_back();
                 problem_state.current_cost -= edge_weight; // Use cached value
@@ -1946,7 +1946,7 @@ void solver::enumerate()
         // {
         //     ready_list[i].current_node_value = next_work_above;
         // }
-        local_pools->thread(thread_id).ready_list().set_node_value(next_work_above);
+        local_pools->thread(thread_id).update_ready_list_node_value(next_work_above);
 
         // DIAGNOSTIC: enum_nodes
         enumerated_nodes[thread_id] += ready_node_count;
@@ -1958,23 +1958,25 @@ void solver::enumerate()
         ctimer.start(cpu_timer::POOL_SORT, thread_id);
         // if (!ready_list.empty())
         //     std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
-        local_pools->thread(thread_id).ready_list().sort();
+        local_pools->thread(thread_id).sort_ready_list();
         local_pools->thread(thread_id).push_ready_list();
         ctimer.stop(cpu_timer::POOL_SORT, thread_id);
 
         int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
 
         /* Begin enumeration. */
-        path_node active_node;
+        local_pool_node_ref active_node;
         while (local_pools->thread(thread_id).pop_from_active_list(active_node))
         {
-            trace.write_node(active_node.sequence.back());
+            local_pools->thread(thread_id).activate(active_node.taken_node);
+            trace.write_node(active_node.taken_node);
 
-            if (active_node.history_node != NULL && active_node.history_node->active_thread != thread_id) {
+            if (active_node.history_node() != NULL && active_node.history_node()->active_thread != thread_id) {
                 trace.write(TRACE_CANCEL_THREAD_STOP, 1);
                 trace.write(static_cast<int>(false), 1);
-                work_remaining[thread_id] -= active_node.current_node_value;
+                work_remaining[thread_id] -= active_node.current_node_value();
                 thread_stop_schedule++;
+                local_pools->thread(thread_id).deactivate();
                 continue;
             }
 
@@ -1988,7 +1990,9 @@ void solver::enumerate()
                 {
                     trace.write(TRACE_CANCEL_THREAD_STOP, 1);
                     trace.write(static_cast<int>(prefix_key_matched), 1);
-                    work_remaining[thread_id] -= active_node.current_node_value;
+                    work_remaining[thread_id] -= active_node.current_node_value();
+                    ctimer.stop(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
+                    local_pools->thread(thread_id).deactivate();
                     if (prefix_key_matched)
                         break;
                     else
@@ -1997,12 +2001,14 @@ void solver::enumerate()
             }
             ctimer.stop(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
             ctimer.start(cpu_timer::RECURSIVE_START, thread_id);
-            if (enumeration_pre_check(active_node))
-                continue; // enumeration-time backtracking, and other preprocessing
+            if (enumeration_pre_check(active_node)) {
+                local_pools->thread(thread_id).deactivate();
+                continue;
+            } // enumeration-time backtracking, and other preprocessing
 
             /* Take */
             int src = problem_state.current_path.back();  // the number of the predecessor to the node being considered
-            int taken_node = active_node.sequence.back(); // this node's number
+            int taken_node = active_node.taken_node; // this node's number
             problem_state.current_path.push_back(taken_node);
             problem_state.taken_arr[taken_node] = true;
             problem_state.current_cost += cost_graph[src][taken_node].weight;
@@ -2020,7 +2026,7 @@ void solver::enumerate()
             // current_hisnode = history_entry;
             // problem_state.suffix_cost = 0;
             problem_state.enumeration_depth++;
-            problem_state.work_above = active_node.current_node_value;
+            problem_state.work_above = active_node.current_node_value();
 
             trace.write(TRACE_ENUMERATE, 1);
             ctimer.stop(cpu_timer::RECURSIVE_START, thread_id);
@@ -2040,10 +2046,11 @@ void solver::enumerate()
             problem_state.current_cost -= cost_graph[src][taken_node].weight;
             problem_state.taken_arr[taken_node] = false;
             problem_state.current_path.pop_back();
+            local_pools->thread(thread_id).deactivate();
 
             if (prune_to_depth != -1) {
-                if (prune_to_depth <= problem_state.current_path.size()) {
-                    if (prune_to_depth == problem_state.current_path.size())
+                if (prune_to_depth <= static_cast<int>(problem_state.current_path.size())) {
+                    if (prune_to_depth == static_cast<int>(problem_state.current_path.size()))
                         prune_to_depth = -1;
                     break;
                 } else {
@@ -2066,7 +2073,7 @@ void solver::enumerate()
         trace.write_end_list();
         while (local_pools->thread(thread_id).pop_from_active_list(active_node))
         {
-            work_remaining[thread_id] -= active_node.current_node_value;
+            work_remaining[thread_id] -= active_node.current_node_value();
         }
         local_pools->thread(thread_id).pop_active_list(); // TODO: make sure with thread stopping that this is handled properly
         // if (stop_init && (int)problem_state.cur_solution.size() <= stop_depth) {
@@ -2452,21 +2459,21 @@ bool solver::split_level_check(deque<sop_state> *solver_container)
     return solver_container->front().current_path.size() != solver_container->back().current_path.size();
 }
 
-bool solver::enumeration_pre_check(path_node &active_node)
+bool solver::enumeration_pre_check(const local_pool_node_ref &active_node)
 {
-    if (active_node.lower_bound >= best_cost
+    if (active_node.lower_bound() >= best_cost
         // || stop_init
         // || (enable_threadstop && active_node.his_entry != NULL
         //                       && active_node.his_entry->Entry.load().prefix_cost < active_node.partial_cost) //TODO: thread stopping
     )
     {
         trace.write(TRACE_CANCEL_PRECHECK, 1);
-        trace.write_detail(active_node.lower_bound, 4);
+        trace.write_detail(active_node.lower_bound(), 4);
         trace.write_detail(best_cost, 4);
         // if (enable_progress_estimation) //pruning due to enumeration-time backtracking
         //     estimated_trimmed_percent[thread_id] += active_node.current_node_value; //add the value of this node you are trimming
         // PROGRESS
-        work_remaining[thread_id] -= active_node.current_node_value;
+        work_remaining[thread_id] -= active_node.current_node_value();
 
         // cur_active_tree.incre_children_cnt(Allocator);
         // if (active_node.his_entry != NULL && active_node.his_entry->active_threadID == thread_id) {
@@ -2820,7 +2827,7 @@ bool solver::workload_request()
             } // updating the variable to track how many of the threads completed the work assigned to them from the primary subspace
             gp_remaining = global_pool.size();
             global_pool_lock.unlock();
-            local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
+            local_pools->thread(thread_id).initial_state(problem_state.current_path);
             trace_initial_state(trace, &problem_state);
             return true;
         }
@@ -2862,7 +2869,7 @@ bool solver::workload_request()
                 // steal_times_lock.lock();
                 // steal_times.push_back(main_timer.get_time_seconds());
                 // steal_times_lock.unlock();
-                local_pools->thread(thread_id).initial_depth(problem_state.current_path.size());
+                local_pools->thread(thread_id).initial_state(problem_state.current_path);
                 trace_initial_state(trace, &problem_state);
                 return true;
             }
@@ -2956,7 +2963,7 @@ void solver::print_state(sop_state &state)
     std::cout << std::endl;
 }
 
-bool solver::check_stop_request(const path_node &active_node, bool *prefixKeyMatched)
+bool solver::check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched)
 {
     if (!thread_requests[thread_id].has_request) return false;
     
@@ -2970,27 +2977,27 @@ bool solver::check_stop_request(const path_node &active_node, bool *prefixKeyMat
     thread_stop_observed++;
     const request_packet &rp = thread_requests[thread_id].request;
 
-    if (rp.target_depth <= active_node.sequence.size() && rp.target_last_node == active_node.sequence[rp.target_depth - 1]) {
+    if (rp.target_depth == active_node.depth && rp.target_last_node == active_node.taken_node) {
         thread_stop_check++;
+        if (active_node.cost() >= rp.target_prefix_cost && rp.key == local_pools->thread(thread_id).current_key) {
+            thread_stopped_successfully++;
+            thread_requests[thread_id].has_request = false;
+            thread_requests[thread_id].lock.unlock();
+            return true; // Indicate that a stop request was found and handled
+        }
 
-        if (rp.target_depth == active_node.sequence.size()) {
-            if (rp.key == active_node.history_key.bit_vector && active_node.cost >= rp.target_prefix_cost) {
-                thread_stopped_successfully++;
-                thread_requests[thread_id].has_request = false;
-                thread_requests[thread_id].lock.unlock();
-                return true; // Indicate that a stop request was found and handled
-            }
-        } else {
-            path_node *node = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node);
-            if (node != nullptr && rp.key == node->history_key.bit_vector && node->cost >= rp.target_prefix_cost) {
-                thread_stopped_successfully++;
-                *prefixKeyMatched = true;
-                thread_requests[thread_id].has_request = false;
-                if (rp.target_depth < active_node.sequence.size() - 1)
-                    prune_to_depth = rp.target_depth;
-                thread_requests[thread_id].lock.unlock();
-                return true; // Indicate that a stop request was found and handled
-            }
+    } else if (rp.target_depth < active_node.depth && rp.target_last_node == problem_state.current_path[rp.target_depth - 1]) {
+        thread_stop_check++;
+        local_pool_node_ref node;
+        bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
+        if (found && node.cost() >= rp.target_prefix_cost && rp.key == node.bit_vector()) {
+            thread_stopped_successfully++;
+            *prefixKeyMatched = true;
+            thread_requests[thread_id].has_request = false;
+            if (rp.target_depth < active_node.depth - 1)
+                prune_to_depth = rp.target_depth;
+            thread_requests[thread_id].lock.unlock();
+            return true; // Indicate that a stop request was found and handled
         }
     }
 

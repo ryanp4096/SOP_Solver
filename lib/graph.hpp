@@ -51,8 +51,6 @@ public:
     // bool deprecated = false; //For Thread Stopping. if this node exists in a redundant subspace and so does not need to be processed
     unsigned long long current_node_value = -1; // the portion out of ULLONG_MAX of the working tree that is under this node
     PrefixKey history_key;
-    HistoryNode *history_node = NULL;
-    int cost;
     // std::vector<Subpath> subpaths;
     
 
@@ -68,14 +66,12 @@ public:
         origin_node = origin;
     }
 
-    path_node(std::vector<int> partial_path, int lb, int origin, PrefixKey key, HistoryNode *node, int cost)
+    path_node(std::vector<int> partial_path, int lb, int origin, PrefixKey key)
     {
         sequence = partial_path;
         lower_bound = lb;
         origin_node = origin;
         history_key = key;
-        history_node = node;
-        this->cost = cost;
     }
 
     // path_node(std::vector<int> partial_path, int lb, int origin, std::pair<boost::dynamic_bitset<>, int> key, std::vector<Subpath> subpath_list)

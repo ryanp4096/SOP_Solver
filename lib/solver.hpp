@@ -165,7 +165,7 @@ private:
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.
         Return - true if the node was discarded, false if its subspace must still be enumerated */
-    bool enumeration_pre_check(path_node &active_node);
+    bool enumeration_pre_check(const local_pool_node_ref &active_node);
     /*called when pruning a node in enumerate*/
     void prune(int source_node, int taken_node, int edge_weight);
 
@@ -212,7 +212,7 @@ private:
     void print_state(sop_state &state);
 
     // For checking, if any thread requested another thread to stop
-    bool check_stop_request(const path_node &active_node, bool *prefixKeyMatched);
+    bool check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched);
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
