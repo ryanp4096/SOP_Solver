@@ -2,8 +2,17 @@ CC = g++
 CG = gcc
 LINK = -o
 CXX_VERSION = -std=c++14 -pthread
-OPTIMIZATION = -O3 -c
-OPTIMIZATION_LINK = -O3
+
+# PROFILE = 2: required for line-level profiling with gprof
+# PROFILE = 1: required for regular profiling with gprof
+ifeq ($(PROFILE),2)
+	OPTIMIZATION_LINK = -pg -g -O0
+else ifeq ($(PROFILE),1)
+	OPTIMIZATION_LINK = -pg -O3
+else
+	OPTIMIZATION_LINK = -O3
+endif
+OPTIMIZATION = $(OPTIMIZATION_LINK) -c
 CXXFLAG = -Wall $(CXX_VERSION)
 
 ifeq ($(ENABLE_TRACE),1)
