@@ -97,7 +97,7 @@ GainType FindTour()
                 best_cost_temp = best_cost;
                 last_updated_time_by_LKH = 0;
                 BB_SolFound = false;
-                printf("Best Cost temp = %lld updated by LKH \n", best_cost_temp);
+                // printf("Best Cost temp = %lld updated by LKH \n", best_cost_temp);
                 pthread_mutex_unlock(&Sol_lock);
             }
 

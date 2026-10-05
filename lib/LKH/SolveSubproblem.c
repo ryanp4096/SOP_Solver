@@ -197,12 +197,32 @@ SolveSubproblem(int CurrentSubproblem, int Subproblems,
                 N->SubBestSuc = N->Suc;
             } while ((N = N->Suc) != FirstNode);
             BestCost = Cost;
+            if (BestCost < best_cost)
+            {
+                pthread_mutex_lock(&Sol_lock);
+                best_cost = BestCost;
+                printf("Best Cost = %lld updated by LKH in subproblem\n", BestCost);
+                best_cost_temp = best_cost;
+                last_updated_time_by_LKH = 0;
+                BB_SolFound = false;
+                pthread_mutex_unlock(&Sol_lock);
+            }
         }
         if (Cost < Optimum || (Cost != Optimum && OutputTourFileName)) {
             Improvement = Optimum - Cost;
             if (Improvement > 0) {
                 BestCost = GlobalCost = *GlobalBestCost -= Improvement;
                 Optimum = Cost;
+                if (BestCost < best_cost)
+                {
+                    pthread_mutex_lock(&Sol_lock);
+                    best_cost = BestCost;
+                    printf("Best Cost = %lld updated by LKH in subproblem\n", BestCost);
+                    best_cost_temp = best_cost;
+                    last_updated_time_by_LKH = 0;
+                    BB_SolFound = false;
+                    pthread_mutex_unlock(&Sol_lock);
+                }
             } else
                 GlobalCost = *GlobalBestCost - Improvement;
             N = FirstNode;

@@ -251,7 +251,7 @@ int local_pool::active_pool_size(int thread_number)
 
 void local_pool::print()
 {
-    for (int i = 0; i < pools.size(); i++)
+    for (size_t i = 0; i < pools.size(); i++)
     {
         std::cout << pools[i].size() << ", ";
     }

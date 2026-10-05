@@ -158,6 +158,9 @@ void set_key(Config *config, string key, string value) {
     else if (key == "lkh_subpaths_only")
         config->lkh_subpaths_only = atoi(cvalue);
 
+    else if (key == "expected_lkh_cost")
+        config->expected_lkh_cost = atoi(cvalue);
+
     else {
         cout << "[Config] Unknown key " << key << endl;
         return;

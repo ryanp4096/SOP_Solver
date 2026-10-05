@@ -202,7 +202,7 @@ HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, unsigned int dept
 
 HistoryNode *History_Table::retrieve(PrefixKey &key, unsigned int depth)
 {
-    if (depth < gp_depth) return NULL;
+    if (static_cast<int>(depth) < gp_depth) return NULL;
     int group_index = get_bucket_index(depth);
     if (!is_data_available[group_index]) return NULL;
     PrefixMap &map = prefix_maps[group_index];
@@ -571,16 +571,16 @@ bool History_Table::free_subtable_memory(float *mem_limit)
 }
 void History_Table::track_entries_and_references()
 {
-    long total_entries = 0;
-    long total_references = 0;
+    // long total_entries = 0;
+    // long total_references = 0;
 
     vector<long long> total_entries_single_table(3, 0);
     vector<long long> total_references_single_table(3, 0);
 
     for (int i = 0; i < num_of_groups; ++i)
     {
-        total_entries = 0;
-        total_references = 0;
+        // total_entries = 0;
+        // total_references = 0;
 
         if (num_of_groups == 1 || is_data_available[i])
             for (PrefixEntry *bucket : prefix_maps[i].buckets)
