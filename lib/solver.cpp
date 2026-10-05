@@ -2567,7 +2567,11 @@ bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool
     *history_node = history_table.retrieve_or_insert(key, problem_state.current_path.size(), problem_state.current_cost, -1, EXPLORING, thread_id, &inserted);
     ctimer.stop(cpu_timer::HISTORY_LOOKUP, thread_id);
     if (*history_node == NULL) {
-        return false;
+        /* Out of memory */
+        ctimer.start(cpu_timer::LOWER_BOUND, thread_id);
+        *lowerbound = dynamic_hungarian(source_node, taken_node);
+        ctimer.stop(cpu_timer::LOWER_BOUND, thread_id);
+        return *lowerbound >= best_cost;
     }
     HistoryNode &entry = **history_node;
 
