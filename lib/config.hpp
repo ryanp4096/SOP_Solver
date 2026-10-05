@@ -70,6 +70,9 @@ struct Config {
     /* Maximum length of subpaths included in subpath history table */
     int subpath_length_limit = INT_MAX;
 
+    /* Enable only storing subpaths of lkh's best tour for faster processing */
+    bool lkh_subpaths_only = false;
+
     /* UNUSED */
 
     int assign_workload_level = 150;

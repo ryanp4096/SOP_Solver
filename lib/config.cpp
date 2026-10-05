@@ -152,10 +152,13 @@ void set_key(Config *config, string key, string value) {
     else if (key == "enable_subpath_history_table")
         config->enable_subpath_history_table = atoi(cvalue);
 
-    else if (key == "subpath_length_limit") {
+    else if (key == "subpath_length_limit")
         config->subpath_length_limit = atoi(cvalue);
     
-    } else {
+    else if (key == "lkh_subpaths_only")
+        config->lkh_subpaths_only = atoi(cvalue);
+
+    else {
         cout << "[Config] Unknown key " << key << endl;
         return;
     }
