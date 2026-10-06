@@ -2652,7 +2652,8 @@ bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool
     }
     entry.active_thread = thread_id;
     entry.state = EXPLORING;
-
+    int old_cost = entry.prefix_cost;
+    entry.prefix_cost = problem_state.current_cost;
 
     /* Calculate or Update Lower Bound */
     if (entry.lower_bound == -1) {
@@ -2674,12 +2675,10 @@ bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool
 
     } else {
         /* Lower bound already stored, update based on improvement */
-        int improvement = entry.prefix_cost - problem_state.current_cost;
+        int improvement = old_cost - problem_state.current_cost;
         *lowerbound = entry.lower_bound - improvement;
         entry.lower_bound = *lowerbound;
     }
-
-    entry.prefix_cost = problem_state.current_cost;
 
     /* Prune if lower bound of current path cannot be better than best cost */
     if (entry.lower_bound >= best_cost) {
