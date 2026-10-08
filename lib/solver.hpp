@@ -35,6 +35,7 @@
 #include "trace.hpp"
 #include "config.hpp"
 #include "memory.hpp"
+#include "statistics/stats.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -105,6 +106,8 @@ private:
     SubpathKey subpath_key{
         .bit_vector{}
     };
+
+    stats_thread stats;
     
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
