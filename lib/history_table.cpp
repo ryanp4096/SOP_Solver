@@ -34,55 +34,8 @@ void MemoryAllocator<T>::free_all() {
     blocks.clear();
 }
 
-// Memory_Module::Memory_Module()
-// {
-//     bucket_block = new Bucket[BUCKET_BLK_SIZE];
-//     history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-//     bucket_counter = 0;
-//     his_node_counter = 0;
-// }
-// Memory_Module::~Memory_Module()
-// {
-//     // cout << "destructor triggered\n";
-//     delete[] bucket_block; // Use delete[] to free the array of Buckets
-//     free(history_block);   // Use free to deallocate memory allocated with malloc
-// }
-
-// Bucket *Memory_Module::get_bucket()
-// {
-//     if (bucket_counter >= BUCKET_BLK_SIZE || bucket_block == NULL)
-//     {
-//         bucket_block = new Bucket[BUCKET_BLK_SIZE];
-//         bucket_counter = 0;
-//     }
-//     Bucket *bucket = bucket_block + bucket_counter;
-//     bucket_counter++;
-//     return bucket;
-// }
-
-// HistoryNode *Memory_Module::retrieve_his_node()
-// {
-//     // HistoryNode* node = NULL;
-
-//     if (his_node_counter >= HIS_BLK_SIZE || history_block == NULL)
-//     {
-//         history_block = (HistoryNode *)malloc(HIS_BLK_SIZE * sizeof(HistoryNode));
-//         his_node_counter = 0;
-//     }
-//     HistoryNode *node = history_block + his_node_counter;
-//     his_node_counter++;
-
-//     return node;
-// }
-
 History_Table::History_Table(size_t size)
 {
-    // struct sysinfo info;
-    // if (sysinfo(&info) != 0)
-    // {
-    //     cout << "can't retrieve system memory info\n";
-    //     exit(EXIT_FAILURE);
-    // }
     MemoryInfo info = getSystemMemory();
 
     num_buckets = size;
@@ -138,12 +91,6 @@ size_t History_Table::get_current_size() { return current_size; }
 
 unsigned long History_Table::get_free_mem()
 {
-    // struct sysinfo info;
-    // if (sysinfo(&info) != 0)
-    // {
-    //     cout << "can't retrieve sys mem info\n";
-    //     exit(1);
-    // }
     MemoryInfo info = getSystemMemory();
     return (double)info.availableBytes;
 }
@@ -163,6 +110,7 @@ HistoryNode *History_Table::insert(PrefixKey &key, unsigned int depth, int prefi
     
     PrefixMap &map = prefix_maps[group_index];
 
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
@@ -182,18 +130,21 @@ HistoryNode *History_Table::retrieve_or_insert(PrefixKey &key, unsigned int dept
     if (blocked_groups[group_index]) return retrieve(key, depth);
     PrefixMap &map = prefix_maps[group_index];
     
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
     spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
 
+    /* Search bucket for entry */
     PrefixEntry *found_entry = search_prefix_bucket(map.buckets[bucket_index], key);
     if (found_entry != NULL) {
         lock.unlock();
         return &found_entry->node;
     }
 
+    /* If not in bucket, insert into bucket */
     PrefixEntry *entry = insert_prefix_entry(map, group_index, thread_id, bucket_index, key, prefix_cost, lower_bound, state);
     lock.unlock();
     *inserted = true;
@@ -207,6 +158,7 @@ HistoryNode *History_Table::retrieve(PrefixKey &key, unsigned int depth)
     if (!is_data_available[group_index]) return NULL;
     PrefixMap &map = prefix_maps[group_index];
 
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.last_node * 1217) % num_buckets;
 
@@ -231,6 +183,7 @@ SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int 
     
     SubpathMap &map = subpath_maps[group_index];
 
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
 
@@ -258,18 +211,21 @@ SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, u
     if (blocked_groups[group_index]) return retrieve_subpath(key, depth, can_break);
     SubpathMap &map = subpath_maps[group_index];
     
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
 
     spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
 
+    /* Search bucket for entry */
     SubpathEntry *found_entry = search_subpath_bucket(map.buckets[bucket_index], key);
     if (found_entry != NULL) {
         lock.unlock();
         return &found_entry->node;
     }
 
+    /* If not in bucket, insert into bucket */
     SubpathEntry *entry = insert_subpath_entry(map, group_index, thread_id, bucket_index, key, subpath_cost);
     lock.unlock();
     *inserted = true;
@@ -288,6 +244,7 @@ SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, unsigned in
     if (!is_data_available[group_index]) return NULL;
     SubpathMap &map = subpath_maps[group_index];
 
+    /* Calculate hash to get bucket index of entry */
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
 
