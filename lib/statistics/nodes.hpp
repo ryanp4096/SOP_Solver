@@ -8,11 +8,13 @@
 struct stats_nodes_depth {
     unsigned long long enumerated{0};   // total enumerated nodes at this depth
     unsigned long long ready{0};        // total ready nodes at this depth
+    unsigned long long popped{0};       // total popped nodes at this depth
     unsigned long long recursive{0};    // total recursive nodes at this depth
 
     stats_nodes_depth &operator+=(const stats_nodes_depth &d) {
         enumerated += d.enumerated;
         ready += d.ready;
+        popped += d.popped;
         recursive += d.recursive;
         return *this;
     }
@@ -111,6 +113,17 @@ struct stats_nodes {
             std::cout << "!! ERROR: Miscount: " << remaining << " remaining nodes != " << totals.recursive << " recursive nodes\n";
 
         std::cout << "Recursive Nodes: " << totals.recursive << std::endl;
+
+        std::cout << "By Depth:\n";
+        for (unsigned d = 1; d <= instance_size; d++) {
+            const stats_nodes_depth &depth = totals.by_depth[d];
+            std::cout << "    [" << d << "]";
+            std::cout << "  Enumerated: " << depth.enumerated;
+            std::cout << ", Ready: " << depth.ready;
+            if (totals.ready != totals.popped || depth.ready != depth.popped)
+                std::cout << ", Popped: " << depth.popped;
+            std::cout << ", Recursive: " << depth.recursive << std::endl;
+        }
     }
 };
 
