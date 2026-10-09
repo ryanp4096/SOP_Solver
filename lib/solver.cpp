@@ -8,15 +8,10 @@ extern "C"
 #define TABLE_SIZE 541065431 // number of buckets in the history table
 std::atomic<bool> isProcessingBestTour(false);
 
-static bool trace_enabled = false;
-static string trace_path;
-static string trace_path_ext;
-
 static cpu_timer ctimer;
 
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
-static string filename;      // name of the sop input file
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
 static bool limit_insertion = false;
 static int numberOfTimesLKHPathProcessed = 0;
@@ -212,11 +207,11 @@ static double gp_remaining; // variable to store the number of remaining work fr
 bool stop_lkh_flag = false;
 bool lkh_entry_processed = false;
 std::atomic<bool> is_first_lkh_thread_use{true};
-void lkh()
+void lkh(string &instance_path)
 {
     while (!BB_Complete && !stop_lkh_flag)
     {
-        LKH(&filename[0], initial_LKHRun);
+        LKH(&instance_path[0], initial_LKHRun);
         if (initial_LKHRun)
         {
             initial_LKHRun = false;
@@ -393,6 +388,7 @@ void solver::enable_trace(string path)
     size_t ext_index = path.find_last_of('.');
     if (ext_index == string::npos || path.length() - ext_index > 5) {
         trace_path = path;
+        trace_path_ext = "";
     } else {
         trace_path = path.substr(0, ext_index);
         trace_path_ext = path.substr(ext_index);
@@ -517,7 +513,6 @@ void solver::solve()
         thread_total = thread_count;
     if (global_pool_size < thread_total)
         global_pool_size = thread_total;
-    filename = instance_path;
     retrieve_input();
     transitive_redundancy();
 
@@ -623,7 +618,7 @@ void solver::solve()
         std::cout << "Launching LKH thread before BB parallel setup\n";
         LKH_thread = std::thread([&](){
             // Run LKH until optimal or timeout
-            lkh();
+            lkh(instance_path);
 
             // As soon as LKH is done, immediately start enumerate on a new subproblem
             // Must wait until solve_parallel completes BB structures (work_remaining, global_pool, local_pools)
@@ -852,6 +847,8 @@ void solver::solve_parallel()
     solvers.reserve(thread_total + 1);
     for (int i = 0; i < thread_total + 1; i++) {
         solvers.push_back(solver_thread(*this, i));
+        if (trace_enabled)
+            solvers.back().enable_trace(trace_path, trace_path_ext);
     }
     deque<sop_state> *solver_container;
     vector<thread> Thread_manager(thread_total + 1);
@@ -1649,18 +1646,19 @@ void solver_thread::processBestTour()
 void solver_thread::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
-    if (trace_enabled) {
-        string path;
-        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
-            path = trace_path + trace_path_ext;
-        else
-            path = trace_path + to_string(thread_id) + trace_path_ext;
-        
-        trace.open(path, instance_size, trace_detail_level, thread_id);
-        trace.write_header();
-        trace_initial_state(trace, &problem_state);
-    }
+    trace_initial_state(trace, &problem_state);
     enumerate();
+}
+
+void solver_thread::enable_trace(const string &trace_path, const string &trace_path_ext) {
+    string path;
+    if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
+        path = trace_path + trace_path_ext;
+    else
+        path = trace_path + to_string(thread_id) + trace_path_ext;
+    
+    trace.open(path, instance_size, trace_detail_level, thread_id);
+    trace.write_header();
 }
 
 void solver_thread::enumerate()

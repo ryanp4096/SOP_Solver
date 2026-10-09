@@ -98,6 +98,9 @@ private:
     int thread_count;
     string config_path;
     Config config;
+    bool trace_enabled{false};
+    string trace_path;
+    string trace_path_ext;
 
     sop_state problem_state; // this thread's current state
     
@@ -214,6 +217,8 @@ private:
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
+
+    void enable_trace(const string &trace_path, const string &trace_path_ext);
 
     friend class solver;
 };
