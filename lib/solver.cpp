@@ -6,31 +6,23 @@ extern "C"
 }
 
 #define TABLE_SIZE 541065431 // number of buckets in the history table
-std::atomic<bool> isProcessingBestTour(false);
 
 static cpu_timer ctimer;
 
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
-static bool limit_insertion = false;
 static int numberOfTimesLKHPathProcessed = 0;
 static atomic<int> numberOfTimesBestSuffixEntryUpdated(0);
 static atomic<int> numberOfTimesBetterThanLKH(0);
-// static int numberOfTimesBestSuffixEntryAdded = 0;
-int *globalBestTour = nullptr;
-static int instance_size;
-int instance_size_global = 0;   // size of the instance, used in copying the best tour within LKH
+int instance_size;
 // from config file
 static int t_limit = 0;          // time limit, in seconds
 static int global_pool_size = 0; // Minimum size of the global pool at before enumeration begins
-// static int local_depth = 0;                     //Minimum size to maintain in the local pool
 static float inhis_mem_limit = -1; // 0-1, the percentage of memory usage beyond which new entries shouldn't be added to the history table
 static float mem_limit = -1;       // 0-1, the percentage of memory usage beyond which we will start blocking new entries into the table
 static int number_of_groups = 1;
 static int bucket_size = 0;
-static bool is_all_table_blocked = false;
-// static unsigned int inhis_depth = -1;           //after inhis_mem_limit exceeded, will still add an entry if the current depth is less than inhis_depth
 // int exploitation_per;                        //percent of threads that should be devoted to searching already promising subspaces in thread restart, while 1 - exploitation_per percent are devoted to exploring new subspaces
 // group_sample_time                            //period on which to schedule thread restart
 // static int tgroup_ratio = 0;                 //
@@ -51,7 +43,6 @@ static bool lkh_subpaths_only = false;
 static int expected_lkh_cost = 0;
 
 // derived attributes
-static int max_edge_weight = 0; // highest weight of any edge in the cost graph
 static float pre_density = 0;   // number of edges in precedence graph (including derived edges) / the maximum possible
 // static int local_pool_size = 0;                 //determined based on presidence density
 /////////////////////////////////////////
@@ -61,7 +52,6 @@ static vector<vector<edge>> cost_graph;      // n by n matrix with the cost from
 static vector<vector<int>> dependency_graph; // list for each node i of every node j that is dependent on it
 static vector<vector<edge>> in_degree;       // list for each node i of every node j that it is dependent on (in edge format) i.e. what nodes must precede it
 static vector<vector<edge>> hungarian_graph; // graph in the format that the Hungarian algorithm requires
-static vector<vector<int>> outgoing_graph;
 
 static sop_state default_state; // state of a solver before the first node was taken
 // static vector<Hungarian> initial_hungarian_state;   //for each thread, the Hungarian solver as it began
@@ -69,26 +59,11 @@ static History_Table history_table(TABLE_SIZE);           // the history table
 static vector<path_node> global_pool;                     // a global pool of nodes that haven't yet been processed by any thread, only ever take from the back
 static local_pool *local_pools;                           // each thread's local pool, with the internal tools to manage them, only ever take from the back
 static vector<atomic<unsigned long long>> work_remaining; // used for work stealing, hold an estimate of how much work is left for a thread to do
-static vector<atomic<float>> time_taken;
 static stats_global* global_stats{};
 
-float last_updated_at;
 ///////////Synchronization Variables/////
-// pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;   //lock for any updates to best_solution and its cost
 static mutex best_solution_lock;
 static mutex global_pool_lock; // lock for getting nodes from the global pool
-// static mutex Split_lock;
-// static mutex asssign_mutex;
-// static mutex thread_load_mutex;
-// static condition_variable Idel;
-// static condition_variable Thread_Stop_Check;
-// static condition_variable Resume_State;
-// static vector<int> selected_orgin;
-// static mutex Select_Mutex;
-// static mutex Select_SharedMutex;
-// static mutex Resume_Lock;
-// static mutex launch_lck;
-// pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;   //lock for any updates to best_solution and its cost
 
 static mutex diagnostics_lock;
 static int diagonstics_period = 1800;
@@ -96,36 +71,16 @@ static float diagonstics_targetTime = 0;
 static atomic<bool> time_out(false);  // whether the instance has timed out
 static std::atomic<bool> parallel_setup_complete(false); // whether B&B solver_parallel has finished setting up structures
 static atomic<int> active_threads(0); // the number of threads still working
-// static atomic<int> selected_thread (-1);
-// static atomic<int> restart_cnt (0);
-// static atomic<int> total_restarts (0);
-// static atomic<unsigned> idle_counter (0);
-// static atomic<size_t> resload_cnt (0);
-// static atomic<bool> limit_insert (false);
-// static atomic<bool> check_status_safe (true);
-// static atomic<bool> resume_success (true);
-// static atomic<bool> resume_check (false);
-// static atomic<bool> exploit_init (false);
 
 static vector<int> best_solution; // the lowest cost solution found so far in any thread
 int best_cost = INT_MAX;          // the cost of best_solution, this is an extern (global) variable shared by LKH
 
 static timer main_timer; // when solve_parallel started (before processing begins, but after all the basic setup, file parsing, etc.)
-static timer lkh_timer;  // time to track when LKH is updating the best solution
-// std::chrono::time_point<std::chrono::system_clock> time_point;
 
 /////////////////////////////////////////
 
 ///////////Thread Stopping Variables/////
-static deque<request_packet> request_buffer; //
-static mutex buffer_lock;                    // lock for accessing the request_buffer
-// static vector<thread_request> thread_requests;
 static vector<thread_request> thread_requests(32);
-
-// static mutex pause_lock;                       //
-// static mutex ptselct_lock;                     //
-static atomic<bool> stop_sig(false); // if any threads are currently being requested to stop
-// static vector<long long int> history_table_pruning_success = vector<long long int>(380); // uncomment to track the pruning at each depth and set the size of the instance
 
 static atomic<int> thread_stop_requested(0);
 static atomic<int> thread_stop_check(0);
@@ -145,7 +100,6 @@ thread LKH_thread;
 int *bestBB_tour = NULL;  // an array of the best solution not found by LKH, but 1-indexed
 bool BB_SolFound = false; // whether the current best solution was found by B&B, rather than LKH
 bool BB_Complete = false;
-bool local_searchinit = true;
 bool initial_LKHRun = true;
 
 // below variables is for sharing LKH best tour
@@ -154,8 +108,6 @@ int *lkh_best_tour = NULL;
 float last_updated_time_by_LKH = 0;
 int lkh_end_time = 100; // updated with the config file value
 // int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
-
-// bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
 
 pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;
 /////////////////////////////////////////
@@ -175,13 +127,6 @@ static atomic<double> time_workstealing;
 static vector<double> steal_times;
 static mutex steal_times_lock;
 // static vector<unsigned long long> estimated_trimmed_percent;  //estimated percentage of entire tree pruned or fully enumerated in each thread, stored as an integer out of ULLONG_MAX
-// TODO: change estimated_trimmed_percent to use unsigned_long_64 (and ULONG_MAX) instead of unsigned long long (and ULLONG_MAX)
-// static vector<int_64> num_resume;
-// static vector<int_64> num_stop;
-// static vector<double> lp_time;
-// static vector<double> steal_wait;
-// static vector<vector<double>> proc_time;
-// static vector<int> steal_cnt;
 // something to track history entry usage
 static vector<boost::dynamic_bitset<>> lkh_path_by_depth;
 static vector<int> lkh_last_node_by_depth;
@@ -252,7 +197,7 @@ MatchInfo check_match(sop_state& problem_state) {
     int last_node = problem_state.history_key.last_node;
     // int cost = problem_state.current_cost;
 
-    if (depth >= instance_size_global)
+    if (depth >= instance_size)
         return {
             .available = true
         };
@@ -447,7 +392,6 @@ void solver::assign_parameter()
     else
     {
         mem_limit = inhis_mem_limit; // if the bucket size is one, the mem limit would be same as config file
-        is_all_table_blocked = true; // by setting this to true, we are saying that all the buckets are blocked except first bucket
     }
     std::cout << "Blocking mem limit = " << mem_limit << std::endl;
 
@@ -533,7 +477,6 @@ void solver::solve()
     temp_solution.push_back(0);
     best_solution = nearest_neighbor(&temp_solution);
     std::cout << "Initial Best Solution Is " << best_cost << std::endl;
-    instance_size_global = instance_size;
     // necessary for LKH
     //  bestBB_tour = new int[instance_size];
     //  for (int i = 0; i < instance_size; i++) bestBB_tour[i] = best_solution[i] + 1;
@@ -542,7 +485,7 @@ void solver::solve()
     //  promise_Tlimit = (thread_total * exploitation_per) / tgroup_ratio;
     //  std::cout << "Maximum exploitation group during thread restart is set to " << promise_Tlimit << std::endl;
 
-    max_edge_weight = get_maxedgeweight();
+    int max_edge_weight = get_maxedgeweight();
     problem_state.hungarian_solver = Hungarian(instance_size, max_edge_weight + 1, get_cost_matrix(max_edge_weight + 1));
     problem_state.hungarian_solver.start();
     problem_state.depCnt = vector<int>(instance_size, 0);
@@ -1183,14 +1126,14 @@ void rotateTourToStartFromNode0(int *tour, int size)
 }
 void checkSubpath(int *tour, PrefixKey &key, int expected_cost, int expected_depth, int expected_shift) {
     if (!enable_manual_match_check) return;
-    int node_to_order[instance_size_global];
-    for (int i = 0; i < instance_size_global; i++) {
+    int node_to_order[instance_size];
+    for (int i = 0; i < instance_size; i++) {
         node_to_order[tour[i]] = i;
     }
-    boost::dynamic_bitset<> order_bitset(instance_size_global, false);
+    boost::dynamic_bitset<> order_bitset(instance_size, false);
     int highest_index = -1;
     int last_node = -1;
-    for (int i = 0; i < instance_size_global; i++) {
+    for (int i = 0; i < instance_size; i++) {
         if (key.bit_vector[i]) {
             int order = node_to_order[i];
             // cout << "N" << i << "/O" << order << " ";
@@ -1213,7 +1156,7 @@ void checkSubpath(int *tour, PrefixKey &key, int expected_cost, int expected_dep
     int stage = 0;
     int shift = -1;
     int length = 1;
-    for (int i = 1; i < instance_size_global; i++) {
+    for (int i = 1; i < instance_size; i++) {
         if (stage == 0 && order_bitset[i]) {
             shift = i - 1;
             stage = 1;
@@ -1226,7 +1169,7 @@ void checkSubpath(int *tour, PrefixKey &key, int expected_cost, int expected_dep
         }
     }
     if (stage == 1) {
-        length = instance_size_global - shift;
+        length = instance_size - shift;
     }
     // cout << "[checkSubpath] Found subpath depth " << length << " shift " << shift << endl;
     if (length != expected_depth || shift != expected_shift) {
@@ -1238,7 +1181,7 @@ void checkSubpath(int *tour, PrefixKey &key, int expected_cost, int expected_dep
 
     int cost_check = 0;
     int last = -1;
-    for (int i = 0; i < instance_size_global; i++) {
+    for (int i = 0; i < instance_size; i++) {
         if (order_bitset[i]) {
             int node = tour[i];
             if (last != -1) {
@@ -1319,7 +1262,7 @@ void solver_thread::processBestTour()
 
     int safety_cost_check_total = 0;
     // Compute total cost using prefix sum
-    for (int i = 0; i < instance_size_global - 1; i++)
+    for (int i = 0; i < instance_size - 1; i++)
     {
         // std::cout << "total cost" << total_cost << std::endl;
         int src = localBestTour[i];
@@ -1327,7 +1270,6 @@ void solver_thread::processBestTour()
         // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
         if (cost_graph[src][dst].weight < 0) {
             cout << "best tour index " << i << " had negative cost between node " << src << " and " << dst << endl;
-            isProcessingBestTour.store(false);
             return;
         }
         safety_cost_check_total += cost_graph[src][dst].weight;
@@ -1337,7 +1279,6 @@ void solver_thread::processBestTour()
     if (safety_cost_check_total != total_cost)
     {
         std::cout << "Mismatch in total cost calculation! Computed: " << safety_cost_check_total << ", Expected: " << total_cost << std::endl;
-        isProcessingBestTour.store(false);
         return;
     }
 
@@ -1731,7 +1672,6 @@ void solver_thread::enumerate()
 
         // Reuse member variable to avoid allocation/deallocation overhead
         ready_list.clear();
-        // bool limit_insertion = false;
         for (int taken_node = 0; taken_node < instance_size; taken_node++)
         {
             if (!problem_state.depCnt[taken_node] && !problem_state.taken_arr[taken_node])
@@ -1883,7 +1823,7 @@ void solver_thread::enumerate()
         local_pools->push_list(thread_id, ready_list);
         ctimer.stop(cpu_timer::POOL_SORT, thread_id);
 
-        int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
+        // int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
 
         /* Begin enumeration. */
         path_node active_node;
@@ -1983,11 +1923,11 @@ void solver_thread::enumerate()
         // }
 
         // TODO_VIKAS: Shouldn't we pass true in the last parameter, since we the iteration is completed
-        if (limit_insertion && history_table.get_current_size() < history_table.get_max_size())
-        {
-            // push_to_history_table(problem_state.history_key, lb_liminsert, NULL, true, true, problem_state.current_path.size(), problem_state.current_cost);
-            history_table.insert(problem_state.history_key, problem_state.current_path.size(), problem_state.current_cost, lb_liminsert, EXPLORED, thread_id);
-        }
+        // if (limit_insertion && history_table.get_current_size() < history_table.get_max_size())
+        // {
+        //     // push_to_history_table(problem_state.history_key, lb_liminsert, NULL, true, true, problem_state.current_path.size(), problem_state.current_cost);
+        //     history_table.insert(problem_state.history_key, problem_state.current_path.size(), problem_state.current_cost, lb_liminsert, EXPLORED, thread_id);
+        // }
 
         // TODO: replace above with this, for taking depth into account
         //  if (limit_insertion && history_table.get_current_size() < history_table.get_max_size() && problem_state.current_path.size() >= inhis_depth) { //don't add if it was already added

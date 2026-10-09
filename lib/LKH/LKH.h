@@ -85,7 +85,7 @@ extern int *lkh_best_tour;
 extern bool stop_lkh_flag;
 extern bool BB_Complete;
 extern int best_cost_temp;
-extern int instance_size_global;
+extern int instance_size;
 extern float last_updated_time_by_LKH;
 extern bool BB_SolFound;
 
