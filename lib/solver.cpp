@@ -13,6 +13,7 @@ static cpu_timer ctimer;
 // from command line arguments
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
 static int numberOfTimesLKHPathProcessed = 0;
+static atomic<unsigned long long> not_best_suffix_count(0);
 static atomic<int> numberOfTimesBestSuffixEntryUpdated(0);
 static atomic<int> numberOfTimesBetterThanLKH(0);
 int instance_size;
@@ -44,7 +45,6 @@ static int expected_lkh_cost = 0;
 
 // derived attributes
 static float pre_density = 0;   // number of edges in precedence graph (including derived edges) / the maximum possible
-// static int local_pool_size = 0;                 //determined based on presidence density
 /////////////////////////////////////////
 
 ///////////Shared Resources//////////////
@@ -82,16 +82,6 @@ static timer main_timer; // when solve_parallel started (before processing begin
 ///////////Thread Stopping Variables/////
 static vector<thread_request> thread_requests(32);
 
-/////////////////////////////////////////
-
-///////////Work Stealing Variables///////
-//
-/////////////////////////////////////////
-
-///////////Thread Restart Variables//////
-// MADE REDUNDANT DO NOT IMPLEMENT
-/////////////////////////////////////////
-
 ///////////LKH Variables/////////////////
 thread LKH_thread;
 int *bestBB_tour = NULL;  // an array of the best solution not found by LKH, but 1-indexed
@@ -110,16 +100,6 @@ pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;
 /////////////////////////////////////////
 
 ///////////Diagnostic Variables//////////
-static atomic<unsigned long long> not_best_suffix_count(0);
-static atomic<int> times_work_stolen;
-static atomic<int> steal_misses;
-static vector<atomic<int>> steal_attempts = vector<atomic<int>>(32);
-static vector<atomic<int>> steal_success = vector<atomic<int>>(32);
-static atomic<double> time_workstealing;
-static vector<double> steal_times;
-static mutex steal_times_lock;
-// static vector<unsigned long long> estimated_trimmed_percent;  //estimated percentage of entire tree pruned or fully enumerated in each thread, stored as an integer out of ULLONG_MAX
-// something to track history entry usage
 static vector<boost::dynamic_bitset<>> lkh_path_by_depth;
 static vector<int> lkh_last_node_by_depth;
 static vector<int> lkh_cost_by_depth;
@@ -543,7 +523,6 @@ void solver::solve()
     // for (int i = 0; i < thread_total; i++) initial_hungarian_state.push_back(default_state.hungarian_solver);
     // steal_cnt = vector<int>(thread_total,0);
     // enumerated_nodes = vector<unsigned_long_64>(thread_total);
-    // estimated_trimmed_percent = vector<unsigned long long>(thread_total,0);
     lkh_best_tour = new int[instance_size + 1]; // + 1 because LKH tours are 1-indexed
     bestBB_tour = new int[instance_size];       // + 1
     for (int i = 0; i < instance_size; i++)
@@ -639,7 +618,8 @@ void solver::solve()
     std::cout << "--------------------------------------------------" << std::endl;
     global_stats->thread_stopping.print_results();
     std::cout << "--------------------------------------------------" << std::endl;
-
+    global_stats->work_stealing.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -656,25 +636,12 @@ void solver::solve()
     std::cout << "Number of times Best suffix entry updated: " << numberOfTimesBestSuffixEntryUpdated.load() << endl;
     std::cout << "Number of times BB found prefix cost better than LKH: " << numberOfTimesBetterThanLKH.load() << endl;
 
-    for (size_t i = 0; i < steal_success.size(); i++)
-        std::cout << steal_success[i] << ", ";
-    std::cout << endl;
-    for (size_t i = 0; i < steal_success.size(); i++)
-        std::cout << steal_attempts[i] << ", ";
-    std::cout << endl;
-    std::cout << "total work stolen: " << times_work_stolen << endl;
-    std::cout << "steal misses: " << steal_misses << endl;
-
-    double percent_time_active = (((double)total_time / 1000000) * 32 - time_workstealing) / ((double)total_time / 1000000 * 32);
+    double percent_time_active = (((double)total_time / 1000000) * 32 - global_stats->work_stealing.total_time_stealing()) / ((double)total_time / 1000000 * 32);
     std::cout << "active time: " << percent_time_active << endl;
 
     std::cout << "best_cost: " << best_cost << "," << setprecision(4) << total_time / (float)(1000000) << std::endl
               << std::endl;
 
-    for (size_t i = 0; i < steal_times.size(); i++)
-    {
-        std::cout << steal_times[i] << endl;
-    }
     print_workdone();
 
     cout << "[Memory] Maximum memory used: " << getPeakMemoryUsage() / 1048576 << " MB" << endl;
@@ -2275,9 +2242,6 @@ bool solver_thread::enumeration_pre_check(path_node &active_node)
         trace.write_detail(active_node.lower_bound, 4);
         trace.write_detail(best_cost, 4);
         stats.nodes->prune_precheck++;
-        // if (enable_progress_estimation) //pruning due to enumeration-time backtracking
-        //     estimated_trimmed_percent[thread_id] += active_node.current_node_value; //add the value of this node you are trimming
-        // PROGRESS
         work_remaining[thread_id] -= active_node.current_node_value;
 
         // cur_active_tree.incre_children_cnt(Allocator);
@@ -2619,18 +2583,19 @@ bool solver_thread::workload_request()
         {
             if (active_threads <= 0)
             {
-                time_workstealing = time_workstealing + t.get_time_seconds();
+                stats.work_stealing->time_stealing += t.get_time_seconds();
                 return false;
             }
             int target = local_pools->choose_victim(thread_id, work_remaining, stolen_from);
 
+            stats.work_stealing->attempts++;
             if (target == -1)
             {
                 misses++;
                 stolen_from = 0;
                 continue;
             }
-            steal_attempts[target]++;
+            stats.work_stealing->by_target[target].attempts++;
             if (local_pools->pop_from_zero_list(target, new_node, thread_id))
             {
                 stats.nodes->popped++;
@@ -2641,13 +2606,9 @@ bool solver_thread::workload_request()
                 problem_state = generate_solver_state(new_node);
                 problem_state.work_above = new_node.current_node_value;
                 active_threads++;
-                times_work_stolen++;
-                steal_success[thread_id]++;
-                time_workstealing = time_workstealing + t.get_time_seconds();
-                steal_misses += misses;
-                // steal_times_lock.lock();
-                // steal_times.push_back(main_timer.get_time_seconds());
-                // steal_times_lock.unlock();
+                stats.work_stealing->time_stealing += t.get_time_seconds();
+                stats.work_stealing->success++;
+                stats.work_stealing->by_target[target].success++;
                 trace_initial_state(trace, &problem_state);
                 return true;
             }
