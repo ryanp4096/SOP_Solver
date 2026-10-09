@@ -380,6 +380,12 @@ void print_diagnostics()
 /* ---------------------       END        -------------------------*/
 /* --------------------- Static Functions -------------------------*/
 
+solver::solver(const string &instance_path, int thread_count, const string &config_path)
+    : instance_path{instance_path}, thread_count{thread_count}, config_path{config_path}
+{
+    assign_parameter();
+}
+
 void solver::enable_trace(string path)
 {
     #ifdef ENABLE_TRACE
@@ -396,8 +402,10 @@ void solver::enable_trace(string path)
     #endif
 }
 
-void solver::assign_parameter(Config config)
+void solver::assign_parameter()
 {
+    config = parse_config(config_path);
+
     t_limit = config.time_limit;
     std::cout << "Time limit = " << t_limit << std::endl;
 
@@ -495,21 +503,21 @@ void print_workdone()
     long double percentage_done = (total_global_work_done / gp_const) * 100;
     std::cout << "Percentage of work done: " << percentage_done << "%" << std::endl;
 }
-void solver::solve(string f_name, int thread_num)
+void solver::solve()
 {
-    if (thread_num < 1)
+    if (thread_count < 1)
     {
         std::cerr << "Invalid Thread Number Input" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     if (enable_lkh)
-        thread_total = thread_num - 1;
+        thread_total = thread_count - 1;
     else
-        thread_total = thread_num;
+        thread_total = thread_count;
     if (global_pool_size < thread_total)
         global_pool_size = thread_total;
-    filename = f_name;
+    filename = instance_path;
     retrieve_input();
     transitive_redundancy();
 
@@ -726,7 +734,7 @@ void solver::solve(string f_name, int thread_num)
     std::cout << endl;
 
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    std::cout << "------------------------" << thread_num << " thread"
+    std::cout << "------------------------" << thread_count << " thread"
               << "------------------------------" << std::endl;
     std::cout << "thread stop requested: " << thread_stop_requested << "\n";
     std::cout << "thread stop check: " << thread_stop_check << "\n";
@@ -2009,14 +2017,14 @@ void solver::retrieve_input()
     // fd_name += "_BB.sop";
 
     // inFile.open(fd_name);
-    inFile.open(filename);
+    inFile.open(instance_path);
     if (inFile.fail())
     {
-        cerr << "Error: cannot open input file " << filename << " -> " << strerror(errno) << endl;
+        cerr << "Error: cannot open input file " << instance_path << " -> " << strerror(errno) << endl;
         exit(EXIT_FAILURE);
     }
     else
-        std::cout << "Input file is " << filename << endl;
+        std::cout << "Input file is " << instance_path << endl;
 
     // Read input one line at a time, storing the matrix
     vector<vector<int>> file_matrix;

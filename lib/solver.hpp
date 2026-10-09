@@ -94,6 +94,11 @@ struct sop_state
 class solver
 {
 private:
+    string instance_path;
+    int thread_count;
+    string config_path;
+    Config config;
+
     sop_state problem_state; // this thread's current state
     
     /* Build graph based on .sop input file specified in filename. */
@@ -117,12 +122,13 @@ private:
     bool split_level_check(deque<sop_state> *solver_container);
 
 public:
+    solver(const string &instance_path, int thread_count, const string &config_path);
     /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(Config config);
+    void assign_parameter();
     /* Enable writing a trace file of the algorithm to the given path. */
     void enable_trace(string path);
     /* Primary function that initializes and begins the solver. */
-    void solve(string f_name, int thread_num);
+    void solve();
 };
 
 class solver_thread {
