@@ -24,6 +24,7 @@ static atomic<int> numberOfTimesBestSuffixEntryUpdated(0);
 static atomic<int> numberOfTimesBetterThanLKH(0);
 // static int numberOfTimesBestSuffixEntryAdded = 0;
 int *globalBestTour = nullptr;
+static int instance_size;
 int instance_size_global = 0;   // size of the instance, used in copying the best tour within LKH
 // from config file
 static int t_limit = 0;          // time limit, in seconds
@@ -568,7 +569,7 @@ void solver::solve(string f_name, int thread_num)
     }
 
     default_state = problem_state; // a copy of problem_state, since structs are passed by value
-    std::cout << "Instance size is " << instance_size - 2 << std::endl;
+    std::cout << "Instance size is " << instance_size << std::endl;
 
     // thread_load = new load_stats [thread_total];
     local_pools = new local_pool(thread_total + 1);
@@ -625,10 +626,8 @@ void solver::solve(string f_name, int thread_num)
             if (!BB_Complete)
             {
                 int lkh_thread_index = thread_total; // Use the next available index
-                solver lkh_solver;
+                solver_thread lkh_solver(*this, lkh_thread_index);
                 lkh_solver.problem_state = default_state;
-                lkh_solver.thread_id = lkh_thread_index;
-                lkh_solver.instance_size = instance_size;
                 lkh_solver.subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
                 lkh_solver.stats = global_stats->thread(lkh_thread_index);
 
@@ -841,7 +840,11 @@ void solver::solve_parallel()
 {
     main_timer.restart();
 
-    vector<solver> solvers(thread_total + 1);
+    vector<solver_thread> solvers{};
+    solvers.reserve(thread_total + 1);
+    for (int i = 0; i < thread_total + 1; i++) {
+        solvers.push_back(solver_thread(*this, i));
+    }
     deque<sop_state> *solver_container;
     vector<thread> Thread_manager(thread_total + 1);
 
@@ -1027,7 +1030,6 @@ void solver::solve_parallel()
                 // solvers[thread_cnt].problem_state.current_node_value = problem.current_node_value; //for progress estimation
 
                 solvers[thread_cnt].thread_id = thread_cnt;
-                solvers[thread_cnt].instance_size = instance_size;
                 // solvers[thread_cnt].lb_curlv = problem.lower_bound;
                 //  solvers[thread_cnt].cur_active_tree = Active_Path(solvers[thread_cnt].problem_state.cur_solution.size());
                 //  solvers[thread_cnt].cur_active_tree.set_threadID(thread_cnt, thread_total);
@@ -1084,7 +1086,7 @@ void solver::solve_parallel()
     for (int i = 0; i < thread_total; ++i)
     {
         std::cout << "Starting thread " << i << "\n";
-        Thread_manager[i] = thread(&solver::start_thread, move(solvers[i]));
+        Thread_manager[i] = thread(&solver_thread::start_thread, move(solvers[i]));
         active_threads++;
     }
 
@@ -1258,7 +1260,7 @@ struct processBestTourStats {
     int error = 0; // error ocurred
 };
 
-void solver::processBestTour()
+void solver_thread::processBestTour()
 {
     if (!enable_process_lkh_best_tour && !enable_manual_match_check) return;
     std::cout << "[processBestTour] Initiating local best tour and Thread ID : " << thread_id << std::endl;
@@ -1636,7 +1638,7 @@ void solver::processBestTour()
 
 }
 
-void solver::start_thread()
+void solver_thread::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
     if (trace_enabled) {
@@ -1653,7 +1655,7 @@ void solver::start_thread()
     enumerate();
 }
 
-void solver::enumerate()
+void solver_thread::enumerate()
 {
     // wait for lkh to finish before enumerating. for debug only
     if (enable_finish_lkh_before_bb && !lkh_entry_processed)
@@ -2351,7 +2353,7 @@ bool solver::split_level_check(deque<sop_state> *solver_container)
     return solver_container->front().current_path.size() != solver_container->back().current_path.size();
 }
 
-bool solver::enumeration_pre_check(path_node &active_node)
+bool solver_thread::enumeration_pre_check(path_node &active_node)
 {
     if (active_node.lower_bound >= best_cost
         // || stop_init
@@ -2379,7 +2381,7 @@ bool solver::enumeration_pre_check(path_node &active_node)
     return false;
 }
 
-void solver::prune(int source_node, int taken_node, int edge_weight)
+void solver_thread::prune(int source_node, int taken_node, int edge_weight)
 {
     problem_state.current_path.pop_back();               // Undo temporary path addition
     problem_state.current_cost -= edge_weight;           // Undo temporary cost addition
@@ -2387,7 +2389,7 @@ void solver::prune(int source_node, int taken_node, int edge_weight)
     problem_state.history_key.last_node = source_node;      // Undo temporary history key
 }
 
-int solver::dynamic_hungarian(int src, int dst)
+int solver_thread::dynamic_hungarian(int src, int dst)
 {
     problem_state.hungarian_solver.fix_row(src, dst);
     problem_state.hungarian_solver.fix_column(dst, src);
@@ -2399,7 +2401,7 @@ int solver::dynamic_hungarian(int src, int dst)
     return lb;
 }
 
-bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **history_node, int source_node, int taken_node)
+bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **history_node, int source_node, int taken_node)
 {
     *found = false;
     bool inserted;
@@ -2556,7 +2558,7 @@ bool solver::history_utilization(PrefixKey &key, int cost, int *lowerbound, bool
     }
 }
 
-bool solver::subpath_history_utilization(const std::vector<int> &path) {
+bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
     if (!enable_subpath_history_table) return false;
     if (lkh_subpaths_only && !lkh_entry_processed) return false;
 
@@ -2645,7 +2647,7 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
 static int stolen_from;
 /* BEGIN WORK STEALING*/
 // WORKSTEALING
-bool solver::workload_request()
+bool solver_thread::workload_request()
 {
     if (thread_requests[thread_id].has_request)
     {
@@ -2744,7 +2746,7 @@ bool solver::workload_request()
     return false;
 }
 
-sop_state solver::generate_solver_state(path_node &subproblem)
+sop_state solver_thread::generate_solver_state(path_node &subproblem)
 {
     sop_state state = default_state;
 
@@ -2804,7 +2806,7 @@ sop_state solver::generate_solver_state(path_node &subproblem)
 // DIAGNOSTIC
 /* BEGIN DIAGNOSTIC FUNCTIONS */
 
-void solver::print_state(sop_state &state)
+void solver_thread::print_state(sop_state &state)
 {
     std::cout << "Path: ";
     for (int i = 0; i < (int)state.current_path.size(); i++)
@@ -2827,7 +2829,7 @@ void solver::print_state(sop_state &state)
     std::cout << std::endl;
 }
 
-bool solver::check_stop_request(PrefixKey history_key, vector<int> sequence, bool *prefixKeyMatched)
+bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequence, bool *prefixKeyMatched)
 {
     if (thread_requests[thread_id].has_request)
     {
@@ -2870,7 +2872,7 @@ bool solver::check_stop_request(PrefixKey history_key, vector<int> sequence, boo
     return false;
 }
  
-bool solver::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
+bool solver_thread::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
 {
     boost::dynamic_bitset<> temp_history_key(instance_size);
     int current_cost = 0;
