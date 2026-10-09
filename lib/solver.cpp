@@ -82,9 +82,6 @@ static timer main_timer; // when solve_parallel started (before processing begin
 ///////////Thread Stopping Variables/////
 static vector<thread_request> thread_requests(32);
 
-static atomic<int> thread_stop_requested(0);
-static atomic<int> thread_stop_check(0);
-static atomic<int> thread_stopped_successfully(0); // how many threads should stop
 /////////////////////////////////////////
 
 ///////////Work Stealing Variables///////
@@ -633,9 +630,16 @@ void solver::solve()
         std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
     }
 
+    std::cout << "--------------------------------------------------" << std::endl;
     global_stats->nodes.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
     global_stats->prefixes.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
     global_stats->subpaths.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->thread_stopping.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -646,9 +650,6 @@ void solver::solve()
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
     std::cout << "------------------------" << thread_count << " thread"
               << "------------------------------" << std::endl;
-    std::cout << "thread stop requested: " << thread_stop_requested << "\n";
-    std::cout << "thread stop check: " << thread_stop_check << "\n";
-    std::cout << "thread stopped successfully: " << thread_stopped_successfully << "\n";
 
     std::cout << "Number of times LKH path was processed: " << numberOfTimesLKHPathProcessed << endl;
     // std::cout << "Number of times Best suffix entry added: " << numberOfTimesBestSuffixEntryAdded << endl;
@@ -2411,7 +2412,7 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
                 thread_requests[target_id].lock.lock();
                 if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size()) // extra validation
                 {
-                    thread_stop_requested++;
+                    stats.thread_stopping->requests++;
                     thread_requests[target_id].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
                                                                         entry.prefix_cost, target_id, key.bit_vector);
                     thread_requests[target_id].has_request = true;
@@ -2748,18 +2749,19 @@ bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequen
         if (thread_requests[thread_id].has_request)
         {
             request_packet rp = thread_requests[thread_id].request;
+            stats.thread_stopping->checks++;
 
             if (rp.target_depth <= static_cast<int>(sequence.size()))
             {
                
                 if (rp.target_last_node == sequence[rp.target_depth - 1])
                 {
-                    thread_stop_check++;
+                    stats.thread_stopping->compared++;
                     if (rp.key == history_key.bit_vector) // will only occur when the size of the target_depth and sequence size is same
                     {
                         int current_cost = problem_state.current_cost;
                         if (current_cost >= rp.target_prefix_cost) {
-                            thread_stopped_successfully++;
+                            stats.thread_stopping->success++;
                             thread_requests[thread_id].has_request = false;
                             thread_requests[thread_id].lock.unlock();
                             return true; // Indicate that a stop request was found and handled
@@ -2767,7 +2769,7 @@ bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequen
                     }
                     else if (check_history_key_and_cost(sequence, rp.target_depth, rp.key, rp.target_prefix_cost)) // will only occur when the size of the target_depth and sequence size is different
                     { 
-                            thread_stopped_successfully++;
+                            stats.thread_stopping->success++;
                             *prefixKeyMatched = true;
                             thread_requests[thread_id].lock.unlock();
                             return true; // Indicate that a stop request was found and handled
