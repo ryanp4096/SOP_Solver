@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <iostream>
+#include <iomanip>
 
 /* Enumerated nodes statistics for a specific depth */
 struct stats_nodes_depth {
@@ -77,23 +78,22 @@ struct stats_nodes {
         for (unsigned i = 0; i < thread_count; i++)
             totals += threads[i];
         
-        std::cout << "Enumerated Nodes: " << totals.enumerated << "\n";
         unsigned long long remaining = totals.enumerated;
 
-        std::cout << "    Pruned by cost:             " << totals.prune_cost << " / " << remaining << "\n";
-        remaining -= totals.prune_cost;
+        auto print_line = [&](const std::string &label, unsigned long long total) {
+            std::cout << "    " << std::setw(28) << std::left << label;
+            std::cout << "  " << std::setw(12) << std::right << total;
+            std::cout << " / " << remaining << "\n";
+            remaining -= total;
+        };
 
-        std::cout << "    Pruned by leaf:             " << totals.prune_leaf << " / " << remaining << "\n";
-        remaining -= totals.prune_leaf;
+        std::cout << "Enumerated Nodes: " << totals.enumerated << "\n";
 
-        std::cout << "    Pruned by prefix history:   " << totals.prune_prefix_history << " / " << remaining << "\n";
-        remaining -= totals.prune_prefix_history;
-
-        std::cout << "    Pruned by lower bound:      " << totals.prune_lower_bound << " / " << remaining << "\n";
-        remaining -= totals.prune_lower_bound;
-
-        std::cout << "    Pruned by subpath history:  " << totals.prune_subpath_history << " / " << remaining << "\n";
-        remaining -= totals.prune_subpath_history;
+        print_line("Pruned by cost:", totals.prune_cost);
+        print_line("Pruned by leaf:", totals.prune_leaf);
+        print_line("Pruned by prefix history:", totals.prune_prefix_history);
+        print_line("Pruned by lower bound:", totals.prune_lower_bound);
+        print_line("Pruned by subpath history:", totals.prune_subpath_history);
 
         std::cout << "Ready Nodes: " << totals.ready << "\n";
         if (remaining != totals.ready)
@@ -103,16 +103,13 @@ struct stats_nodes {
             std::cout << "Popped Nodes: " << totals.popped << "\n";
         remaining = totals.popped;
 
-        std::cout << "    Pruned by thread stop:      " << totals.prune_thread_stop << " / " << remaining << "\n";
-        remaining -= totals.prune_thread_stop;
+        print_line("Pruned by thread stop:", totals.prune_thread_stop);
+        print_line("Pruned by precheck:", totals.prune_precheck);
 
-        std::cout << "    Pruned by precheck:         " << totals.prune_precheck << " / " << remaining << "\n";
-        remaining -= totals.prune_precheck;
-
+        std::cout << "Recursive Nodes: " << totals.recursive << std::endl;
         if (remaining != totals.recursive)
             std::cout << "!! ERROR: Miscount: " << remaining << " remaining nodes != " << totals.recursive << " recursive nodes\n";
 
-        std::cout << "Recursive Nodes: " << totals.recursive << std::endl;
 
         std::cout << "By Depth:\n";
         for (unsigned d = 1; d <= instance_size; d++) {

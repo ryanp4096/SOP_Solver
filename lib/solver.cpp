@@ -7,8 +7,6 @@ extern "C"
 
 #define TABLE_SIZE 541065431 // number of buckets in the history table
 
-static cpu_timer ctimer;
-
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
@@ -499,8 +497,6 @@ void solver::solve()
 
     history_table.initialize(thread_total + 1, TABLE_SIZE, number_of_groups, bucket_size, &main_timer, instance_size, setting);
 
-    ctimer.initialize(thread_total + 1);
-
     global_stats = new stats_global(thread_total + 1, instance_size);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
@@ -620,6 +616,8 @@ void solver::solve()
     std::cout << "--------------------------------------------------" << std::endl;
     global_stats->work_stealing.print_results();
     std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->cpu_timer.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -645,8 +643,6 @@ void solver::solve()
     print_workdone();
 
     cout << "[Memory] Maximum memory used: " << getPeakMemoryUsage() / 1048576 << " MB" << endl;
-
-    ctimer.print_results();
 
     // cout << "[Memory] Memory Info Lookups: " << getMemoryLookupCount() << endl;
     // to count the number of entries at different level in history table and their references
@@ -1606,7 +1602,7 @@ void solver_thread::enumerate()
         {
             if (!problem_state.depCnt[taken_node] && !problem_state.taken_arr[taken_node])
             { // only consider nodes that haven't already been taken, and who have no remaining dependencies
-                ctimer.start(cpu_timer::NODE_SETUP, thread_id);
+                stats.cpu_timer->enumerate_node_start.start_timer();
                 ready_node_count++;
                 trace.write_node(taken_node);
 
@@ -1639,7 +1635,7 @@ void solver_thread::enumerate()
                     pruned_count++;
                     log_node(thread_id, problem_state, match_info, PRUNE_BEST_COST);
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                    stats.cpu_timer->enumerate_node_start.stop_timer();
                     stats.nodes->prune_cost++;
                     continue;
                 }
@@ -1682,28 +1678,27 @@ void solver_thread::enumerate()
 
                     pruned_count++;
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                    stats.cpu_timer->enumerate_node_start.stop_timer();
                     continue;
                 }
-                ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                stats.cpu_timer->enumerate_node_start.stop_timer();
 
-                ctimer.start(cpu_timer::HISTORY_UTILIZATION, thread_id);
+                stats.cpu_timer->enumerate_prefix_history.start_timer();
                 bool pruned = history_utilization(problem_state.history_key, problem_state.current_cost, &lower_bound, &taken, &his_node, source_node, taken_node);
+                stats.cpu_timer->enumerate_prefix_history.stop_timer();
                 if (pruned) {
                     pruned_count++;
                     log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::HISTORY_UTILIZATION, thread_id);
                     continue;
                 }
-                ctimer.stop(cpu_timer::HISTORY_UTILIZATION, thread_id);
 
 
                 /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
                 if (enable_subpath_history_table && (!lkh_subpaths_only || lkh_entry_processed)) {
-                    ctimer.start(cpu_timer::SUBPATH_HISTORY, thread_id);
+                    stats.cpu_timer->enumerate_subpath_history.start_timer();
                     bool pruned_by_subpaths = subpath_history_utilization(problem_state.current_path);
-                    ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
+                    stats.cpu_timer->enumerate_subpath_history.stop_timer();
 
                     if (pruned_by_subpaths) {
                         pruned_count++;
@@ -1714,7 +1709,7 @@ void solver_thread::enumerate()
                     }
                 }
 
-                ctimer.start(cpu_timer::NODE_END, thread_id);
+                stats.cpu_timer->enumerate_node_end.start_timer();
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
@@ -1726,7 +1721,7 @@ void solver_thread::enumerate()
                 problem_state.current_cost -= edge_weight; // Use cached value
                 problem_state.history_key.bit_vector[taken_node] = false;
                 problem_state.history_key.last_node = source_node;
-                ctimer.stop(cpu_timer::NODE_END, thread_id);
+                stats.cpu_timer->enumerate_node_end.stop_timer();
             }
         }
         trace.write_end_list();
@@ -1744,11 +1739,11 @@ void solver_thread::enumerate()
         }
 
         // Sort the ready list and push into local pool
-        ctimer.start(cpu_timer::POOL_SORT, thread_id);
+        stats.cpu_timer->enumerate_sort_pool.start_timer();
         if (!ready_list.empty())
             std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
         local_pools->push_list(thread_id, ready_list);
-        ctimer.stop(cpu_timer::POOL_SORT, thread_id);
+        stats.cpu_timer->enumerate_sort_pool.stop_timer();
 
         // int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
 
@@ -1760,9 +1755,9 @@ void solver_thread::enumerate()
             stats.nodes->by_depth[active_node.sequence.size()].popped++;
 
             trace.write_node(active_node.sequence.back());
-            ctimer.start(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
             if (enable_threadstop)
             {
+                stats.cpu_timer->enumerate_thread_stop.start_timer();
                 // COMMENT: we are comparing the active_node(thread_id, last_node) with the request_buffer(thread_id, request_buffer)
                 // Don't we need other parameters such as depth, prefix_cost or  history_key
                 bool prefix_key_matched = false;
@@ -1772,16 +1767,19 @@ void solver_thread::enumerate()
                     trace.write(TRACE_CANCEL_THREAD_STOP, 1);
                     trace.write(static_cast<int>(prefix_key_matched), 1);
                     work_remaining[thread_id] -= active_node.current_node_value;
+                    stats.cpu_timer->enumerate_thread_stop.stop_timer();
                     if (prefix_key_matched)
                         break;
                     else
                         continue;
                 }
+                stats.cpu_timer->enumerate_thread_stop.stop_timer();
             }
-            ctimer.stop(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
-            ctimer.start(cpu_timer::RECURSIVE_START, thread_id);
-            if (enumeration_pre_check(active_node))
+            stats.cpu_timer->enumerate_recursive_start.start_timer();
+            if (enumeration_pre_check(active_node)) {
+                stats.cpu_timer->enumerate_recursive_start.stop_timer();
                 continue; // enumeration-time backtracking, and other preprocessing
+            }
 
             /* Take */
             int src = problem_state.current_path.back();  // the number of the predecessor to the node being considered
@@ -1808,9 +1806,9 @@ void solver_thread::enumerate()
             stats.nodes->recursive++;
             stats.nodes->by_depth[active_node.sequence.size()].recursive++;
             trace.write(TRACE_ENUMERATE, 1);
-            ctimer.stop(cpu_timer::RECURSIVE_START, thread_id);
+            stats.cpu_timer->enumerate_recursive_start.stop_timer();
             enumerate();
-            ctimer.start(cpu_timer::RECURSIVE_END, thread_id);
+            stats.cpu_timer->enumerate_recursive_end.start_timer();
 
             /* Untake */
             problem_state.enumeration_depth--;
@@ -1833,10 +1831,11 @@ void solver_thread::enumerate()
                     time_out = true;
                     active_threads = 0;
                     local_pools->pop_active_list(thread_id);
+                    stats.cpu_timer->enumerate_recursive_end.stop_timer();
                     return;
                 }
             }
-            ctimer.stop(cpu_timer::RECURSIVE_END, thread_id);
+            stats.cpu_timer->enumerate_recursive_end.stop_timer();
         }
         trace.write_end_list();
         while (local_pools->pop_from_active_list(thread_id, active_node))
@@ -2265,6 +2264,7 @@ void solver_thread::prune(int source_node, int taken_node, int edge_weight)
 
 int solver_thread::dynamic_hungarian(int src, int dst)
 {
+    stats.cpu_timer->lower_bound.start_timer();
     problem_state.hungarian_solver.fix_row(src, dst);
     problem_state.hungarian_solver.fix_column(dst, src);
     problem_state.hungarian_solver.solve_dynamic();
@@ -2272,6 +2272,7 @@ int solver_thread::dynamic_hungarian(int src, int dst)
     int lb = problem_state.hungarian_solver.get_matching_cost() / 2; // based on the conversion between MCPM and SOP, the actual lower bound is the Hungarian solution / 2
     problem_state.hungarian_solver.undue_row(src, dst);
     problem_state.hungarian_solver.undue_column(dst, src);
+    stats.cpu_timer->lower_bound.stop_timer();
     return lb;
 }
 
@@ -2279,18 +2280,16 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
 {
     *found = false;
     bool inserted;
-    ctimer.start(cpu_timer::HISTORY_LOOKUP, thread_id);
+    stats.cpu_timer->prefix_history_lookup.start_timer();
     *history_node = history_table.retrieve_or_insert(key, problem_state.current_path.size(), problem_state.current_cost, -1, EXPLORING, thread_id, &inserted);
-    ctimer.stop(cpu_timer::HISTORY_LOOKUP, thread_id);
+    stats.cpu_timer->prefix_history_lookup.stop_timer();
     stats.prefixes->checks++;
 
     if (*history_node == NULL) {
         /* Out of memory */
         stats.prefixes->not_found++;
         stats.prefixes->not_inserted++;
-        ctimer.start(cpu_timer::LOWER_BOUND, thread_id);
         *lowerbound = dynamic_hungarian(source_node, taken_node);
-        ctimer.stop(cpu_timer::LOWER_BOUND, thread_id);
         if (*lowerbound >= best_cost) {
             stats.nodes->prune_lower_bound++;
             return true;
@@ -2305,16 +2304,14 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
         /* Calculate lower bound */
         stats.prefixes->not_found++;
         stats.prefixes->inserted++;
-        ctimer.start(cpu_timer::ENTRY_EDIT, thread_id);
-        ctimer.start(cpu_timer::LOWER_BOUND, thread_id);
+        stats.cpu_timer->prefix_history_entry.start_timer();
         *lowerbound = dynamic_hungarian(source_node, taken_node);
-        ctimer.stop(cpu_timer::LOWER_BOUND, thread_id);
         entry.lock.lock();
 
         if (entry.active_thread != thread_id) {
             /* While calculating lower bound, another thread found a better path */
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             stats.nodes->prune_prefix_history++;
             return true;
         }
@@ -2325,19 +2322,19 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
             stats.nodes->prune_lower_bound++;
             entry.state = EXPLORED;
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             return true;
 
         } else {
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             return false;
         }
     }
 
     stats.prefixes->found++;
 
-    ctimer.start(cpu_timer::ENTRY_EDIT, thread_id);
+    stats.cpu_timer->prefix_history_entry.start_timer();
     *found = true;
     entry.lock.lock();
 
@@ -2349,7 +2346,7 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
             stats.prefixes->pruned++;
             stats.nodes->prune_prefix_history++;
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             return true;
         }
     } else {
@@ -2358,7 +2355,7 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
             stats.prefixes->pruned++;
             stats.nodes->prune_prefix_history++;
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             return true;
         }
     }
@@ -2369,7 +2366,7 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
     if (entry.state == EXPLORING && enable_threadstop) {
         if (active_threads > 0 && entry.active_thread != thread_id)
         {
-            ctimer.start(cpu_timer::THREAD_STOP, thread_id);
+            stats.cpu_timer->thread_stop_request.start_timer();
             int target_id = entry.active_thread;
             if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size())
             {
@@ -2383,7 +2380,7 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
                 }
                 thread_requests[target_id].lock.unlock();
             }
-            ctimer.stop(cpu_timer::THREAD_STOP, thread_id);
+            stats.cpu_timer->thread_stop_request.stop_timer();
         }
     }
     entry.active_thread = thread_id;
@@ -2395,15 +2392,13 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
     if (entry.lower_bound == -1) {
         /* Lower bound not stored, calculate */
         entry.lock.unlock();
-        ctimer.start(cpu_timer::LOWER_BOUND, thread_id);
         *lowerbound = dynamic_hungarian(source_node, taken_node);
-        ctimer.stop(cpu_timer::LOWER_BOUND, thread_id);
         entry.lock.lock();
 
         if (entry.active_thread != thread_id) {
             /* While calculating lower bound, another thread found a better path */
             entry.lock.unlock();
-            ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+            stats.cpu_timer->prefix_history_entry.stop_timer();
             stats.nodes->prune_prefix_history++;
             return true;
         }
@@ -2421,13 +2416,13 @@ bool solver_thread::history_utilization(PrefixKey &key, int cost, int *lowerboun
     if (entry.lower_bound >= best_cost) {
         entry.state = EXPLORED;
         entry.lock.unlock();
-        ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+        stats.cpu_timer->prefix_history_entry.stop_timer();
         stats.nodes->prune_lower_bound++;
         return true;
 
     } else {
         entry.lock.unlock();
-        ctimer.stop(cpu_timer::ENTRY_EDIT, thread_id);
+        stats.cpu_timer->prefix_history_entry.stop_timer();
         return false;
     }
 }
@@ -2465,7 +2460,9 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         SubpathHistoryNode *history_node;
         if (lkh_subpaths_only) {
             bool can_break;
+            stats.cpu_timer->subpath_history_lookup.start_timer();
             history_node = history_table.retrieve_subpath(subpath_key, length, &can_break);
+            stats.cpu_timer->subpath_history_lookup.stop_timer();
             if (history_node == NULL) {
                 /* Subpath not found in history table */
                 stats.subpaths->not_found++;
@@ -2477,7 +2474,9 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
 
         } else {
             bool inserted;
+            stats.cpu_timer->subpath_history_lookup.start_timer();
             history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
+            stats.cpu_timer->subpath_history_lookup.stop_timer();
             if (history_node == NULL) {
                 /* Subpath not found in history table (not inserted) */
                 stats.subpaths->not_found++;
@@ -2494,11 +2493,13 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         }
 
         stats.subpaths->found++;
+        stats.cpu_timer->subpath_history_entry.start_timer();
 
         if (subpath_cost > static_cast<int>(history_node->subpath_cost)) {
             /* Better subpath found in history table, prune */
             stats.subpaths->pruned++;
             stats.subpaths->by_depth[length].checks_pruned++;
+            stats.cpu_timer->subpath_history_entry.stop_timer();
             return true;
 
         } else if (subpath_cost < static_cast<int>(history_node->subpath_cost)) {
@@ -2514,6 +2515,7 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
             stats.subpaths->by_depth[length].checks_equal++;
             
         }
+        stats.cpu_timer->subpath_history_entry.stop_timer();
     }
     return false;
 }
@@ -2706,6 +2708,7 @@ bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequen
 {
     if (thread_requests[thread_id].has_request)
     {
+        stats.cpu_timer->thread_stop_check.start_timer();
         thread_requests[thread_id].lock.lock();
         if (thread_requests[thread_id].has_request)
         {
@@ -2725,6 +2728,7 @@ bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequen
                             stats.thread_stopping->success++;
                             thread_requests[thread_id].has_request = false;
                             thread_requests[thread_id].lock.unlock();
+                            stats.cpu_timer->thread_stop_check.stop_timer();
                             return true; // Indicate that a stop request was found and handled
                         }
                     }
@@ -2733,15 +2737,18 @@ bool solver_thread::check_stop_request(PrefixKey history_key, vector<int> sequen
                             stats.thread_stopping->success++;
                             *prefixKeyMatched = true;
                             thread_requests[thread_id].lock.unlock();
+                            stats.cpu_timer->thread_stop_check.stop_timer();
                             return true; // Indicate that a stop request was found and handled
                     }
                 }
             }
             thread_requests[thread_id].has_request = false;
             thread_requests[thread_id].lock.unlock();
+            stats.cpu_timer->thread_stop_check.stop_timer();
             return false; // Indicate that a stop request was found and handled
         }
         thread_requests[thread_id].lock.unlock();
+        stats.cpu_timer->thread_stop_check.stop_timer();
     }
     return false;
 }
