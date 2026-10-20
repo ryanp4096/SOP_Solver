@@ -246,6 +246,16 @@ int LKH(char *problem_file, bool initial_LKHRun)
         WriteTour(OutputTourFileName, BestTour, BestCost);
         WriteTour(TourFileName, BestTour, BestCost);
         Runs = 0;
+        if (BestCost < best_cost)
+        {
+            pthread_mutex_lock(&Sol_lock);
+            best_cost = BestCost;
+            printf("Best Cost = %lld updated by LKH before loop\n", BestCost);
+            best_cost_temp = best_cost;
+            last_updated_time_by_LKH = 0;
+            BB_SolFound = false;
+            pthread_mutex_unlock(&Sol_lock);
+        }
     }
 
     /* Find a specified number (Runs) of local optima */
@@ -264,7 +274,7 @@ int LKH(char *problem_file, bool initial_LKHRun)
             {
                 pthread_mutex_lock(&Sol_lock);
                 best_cost = BestCost;
-                printf("Best Cost = %lld updated before break\n", BestCost);
+                printf("Best Cost = %lld updated by LKH before break\n", BestCost);
                 best_cost_temp = best_cost;
                 last_updated_time_by_LKH = 0;
                 BB_SolFound = false;
@@ -349,6 +359,16 @@ int LKH(char *problem_file, bool initial_LKHRun)
             RecordBetterTour();
             RecordBestTour();
             WriteTour(TourFileName, BestTour, BestCost);
+            if (BestCost < best_cost)
+            {
+                pthread_mutex_lock(&Sol_lock);
+                best_cost = BestCost;
+                printf("Best Cost = %lld updated by LKH in loop\n", BestCost);
+                best_cost_temp = best_cost;
+                last_updated_time_by_LKH = 0;
+                BB_SolFound = false;
+                pthread_mutex_unlock(&Sol_lock);
+            }
         }
         OldOptimum = Optimum;
         if (!Penalty ||

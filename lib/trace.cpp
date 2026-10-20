@@ -115,7 +115,7 @@ void Trace::write_end_list() {
 
 Trace::Trace() {}
 void Trace::open(std::string path, int instance_size, TraceDetailLevel detail_level, int thread_id) {}
-void write_header() {}
+void Trace::write_header() {}
 void Trace::close() {}
 bool Trace::is_open() { return false; }
 void Trace::write(unsigned long long data, size_t bytes) {}

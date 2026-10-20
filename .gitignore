@@ -14,3 +14,8 @@ sop_trace
 
 # for temporary config file, change parameters for individual runs without being tracked on git
 temp_config.txt
+
+# for profiling using gprof or callgrind
+callgrind.out.*
+gmon.out
+gmon.out.*

@@ -5,6 +5,7 @@
 #include <string>
 #include <iostream>
 #include <algorithm>
+#include <climits>
 
 using namespace std;
 
@@ -65,6 +66,17 @@ struct Config {
 
     /* Enable separate history table for subpaths */
     bool enable_subpath_history_table = false;
+
+    /* Maximum length of subpaths included in subpath history table */
+    int subpath_length_limit = INT_MAX;
+
+    /* Enable only storing subpaths of lkh's best tour for faster processing */
+    bool lkh_subpaths_only = false;
+
+    /* Run lkh until this cost is reached. 0 = disable.
+       Only use for debugging to get consistent lkh behavior.
+       Cannot be used in regular runs as the expected cost is unknown for new instances */
+    int expected_lkh_cost = 0;
 
     /* UNUSED */
 
