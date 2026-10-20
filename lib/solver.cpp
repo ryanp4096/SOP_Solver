@@ -50,7 +50,7 @@ static bool enable_process_lkh_subpaths = true;
 static TraceDetailLevel trace_detail_level = DETAIL_NORMAL;
 static bool enable_manual_match_check = false;
 static bool enable_subpath_history_table = true;
-static int subpath_length_limit = INT_MAX;
+static int subpath_length_limit = -1;
 static bool lkh_subpaths_only = false;
 static int expected_lkh_cost = 0;
 
@@ -112,6 +112,8 @@ static atomic<int> active_threads(0); // the number of threads still working
 
 static vector<int> best_solution; // the lowest cost solution found so far in any thread
 int best_cost = INT_MAX;          // the cost of best_solution, this is an extern (global) variable shared by LKH
+
+static unsigned long long subpath_length_limit_checked = 0;
 
 static timer main_timer; // when solve_parallel started (before processing begins, but after all the basic setup, file parsing, etc.)
 static timer lkh_timer;  // time to track when LKH is updating the best solution
@@ -584,6 +586,8 @@ void solver::solve(string f_name, int thread_num)
 
     ctimer.initialize(thread_total + 1);
     subpath_d = new subpath_data(thread_total + 1, instance_size);
+
+    if (subpath_length_limit < 0 || subpath_length_limit > instance_size) subpath_length_limit = instance_size;
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
     // {
@@ -1680,6 +1684,32 @@ void solver::enumerate()
         if (!workload_request()) // end if there is no more work
             return;
     }
+
+    if (enable_subpath_history_table && thread_id == 0 && subpath_length_limit >= 4 && enumerated_nodes[thread_id] >= subpath_length_limit_checked) {
+        subpath_length_limit_checked += 10000;
+        if (main_timer.get_time_seconds() >= 1) {
+            while (subpath_length_limit >= 4) {
+                unsigned long long checks = 0;
+                unsigned long long pruned = 0;
+                int i = subpath_length_limit + 1;
+                do {
+                    i--;
+                    if (i < 4) break;
+                    for (const auto &t : subpath_d->threads) {
+                        checks += t.by_depth[i].checks;
+                        pruned += t.by_depth[i].checks_pruned;
+                    }
+                } while (checks < 50000);
+
+                if (i >= 4 && pruned < checks / 100) {
+                    subpath_length_limit = i - 1;
+                    if (subpath_length_limit < 4) subpath_length_limit = 0;
+                    std::cout << "Decreased subpath length limit to " << subpath_length_limit << std::endl;
+                } else break;
+            }
+        }
+    }
+
     while (!time_out)
     {
         // process best tour from LKH if needed
@@ -1922,18 +1952,21 @@ void solver::enumerate()
                 /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
                 if (enable_subpath_history_table && (!lkh_subpaths_only || lkh_entry_processed)) {
                     ctimer.start(cpu_timer::SUBPATH_HISTORY, thread_id);
-                    subpath_key.bit_vector.reset();
-                    subpath_key.bit_vector[taken_node] = true;
-                    subpath_key.first_node = taken_node;
-                    subpath_key.last_node = taken_node;
+
+                    int length_limit = problem_state.current_path.size() - 1;
+                    if (subpath_length_limit < length_limit) length_limit = subpath_length_limit;
+                    if (length_limit < 4) length_limit = 0; // if length limit is shorter than the shortest possible subpath, don't check subpaths at all
+
+                    if (length_limit >= 4) {
+                        subpath_key.bit_vector.reset();
+                        subpath_key.bit_vector[taken_node] = true;
+                        subpath_key.first_node = taken_node;
+                        subpath_key.last_node = taken_node;
+                    }
                     int subpath_cost = 0;
                     bool pruned = false;
 
                     subpath_d->threads[thread_id].nodes++;
-                    
-                    int length_limit = problem_state.current_path.size() - 1;
-                    if (subpath_length_limit != 0 && subpath_length_limit < length_limit) length_limit = subpath_length_limit;
-                    if (length_limit < 4) length_limit = 0; // if length limit is shorter than the shortest possible subpath, don't check subpaths at all
 
                     for (int length = 2; length <= length_limit; length++) {
                         int src = problem_state.current_path[problem_state.current_path.size() - length];
