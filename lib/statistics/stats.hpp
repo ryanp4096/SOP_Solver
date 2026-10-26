@@ -10,12 +10,12 @@
 
 /* Stats for a specific thread, pointing to multiple thread stats structs stored in stats_global*/
 struct stats_thread {
-    stats_nodes_thread *nodes{};
-    stats_prefixes_thread *prefixes{};
-    stats_subpaths_thread *subpaths{};
-    stats_thread_stopping_thread *thread_stopping{};
-    stats_work_stealing_thread *work_stealing{};
-    stats_cpu_timer_thread *cpu_timer{};
+    stats_nodes_thread *const nodes{};
+    stats_prefixes_thread *const prefixes{};
+    stats_subpaths_thread *const subpaths{};
+    stats_thread_stopping_thread *const thread_stopping{};
+    stats_work_stealing_thread *const work_stealing{};
+    stats_cpu_timer_thread *const cpu_timer{};
 };
 
 /* Contains all stats for all threads */

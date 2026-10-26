@@ -539,10 +539,9 @@ void solver::solve()
             if (!BB_Complete)
             {
                 int lkh_thread_index = thread_total; // Use the next available index
-                solver_thread lkh_solver(*this, lkh_thread_index);
+                solver_thread lkh_solver(*this, lkh_thread_index, global_stats->thread(lkh_thread_index));
                 lkh_solver.problem_state = default_state;
                 lkh_solver.subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
-                lkh_solver.stats = global_stats->thread(lkh_thread_index);
 
                 if (/*enable_process_lkh_best_tour &&*/ !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
                 {
@@ -725,7 +724,7 @@ void solver::solve_parallel()
     vector<solver_thread> solvers{};
     solvers.reserve(thread_total + 1);
     for (int i = 0; i < thread_total + 1; i++) {
-        solvers.push_back(solver_thread(*this, i));
+        solvers.push_back(solver_thread(*this, i, global_stats->thread(i)));
         if (trace_enabled)
             solvers.back().enable_trace(trace_path, trace_path_ext);
     }
@@ -930,7 +929,6 @@ void solver::solve_parallel()
                 }
                 int last_element = solvers[thread_cnt].problem_state.current_path.back();
                 solvers[thread_cnt].problem_state.history_key = {bit_vector, last_element};
-                solvers[thread_cnt].stats = global_stats->thread(thread_cnt);
 
                 thread_cnt++;
                 origin_taken_arr[origin] = true;
