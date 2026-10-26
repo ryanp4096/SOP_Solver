@@ -66,6 +66,7 @@ static vector<vector<int>> dependency_graph; // list for each node i of every no
 static vector<vector<edge>> in_degree;       // list for each node i of every node j that it is dependent on (in edge format) i.e. what nodes must precede it
 static vector<vector<edge>> hungarian_graph; // graph in the format that the Hungarian algorithm requires
 static vector<vector<int>> outgoing_graph;
+static vector<vector<bool>> is_dependent_graph; // array containing at every coordinate (i, j) whether i is dependent on j (whether j must come before i)
 
 static sop_state default_state; // state of a solver before the first node was taken
 // static vector<Hungarian> initial_hungarian_state;   //for each thread, the Hungarian solver as it began
@@ -2060,6 +2061,7 @@ void solver::retrieve_input()
     cost_graph = vector<vector<edge>>(instance_size);
     hungarian_graph = vector<vector<edge>>(instance_size);
     dependency_graph = vector<vector<int>>(instance_size);
+    is_dependent_graph = vector<vector<bool>>(instance_size);
 
     for (int i = 0; i < (int)file_matrix.size(); i++)
     {
@@ -2071,11 +2073,13 @@ void solver::retrieve_input()
                 cost_graph[i].push_back(edge(i, j, file_matrix[j][i]));
                 hungarian_graph[i].push_back(edge(i, j, -1));
                 dependency_graph[j].push_back(i);
+                is_dependent_graph[i].push_back(true);
             }
             else
             {
                 cost_graph[i].push_back(edge(i, j, edge_weight));
                 hungarian_graph[i].push_back(edge(i, j, edge_weight));
+                is_dependent_graph[i].push_back(false);
             }
             j++;
         }
@@ -2529,6 +2533,7 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
     if (!enable_subpath_history_table) return false;
     if (lkh_subpaths_only && !lkh_entry_processed) return false;
 
+    bool one_possible_ordering = true;
     subpath_key.bit_vector.reset();
     subpath_key.bit_vector[path.back()] = true;
     subpath_key.first_node = path.back();
@@ -2544,8 +2549,9 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
     /* Loop through each new subpath, which is every subpath containing the last node, from shortest to longest */
     for (int length = 2; length <= length_limit; length++) {
         /* Modify history key for this subpath from the previous subpath */
-        int src = problem_state.current_path[path.size() - length];
-        int dst = problem_state.current_path[path.size() - length + 1];
+        int base = path.size() - length;
+        int src = path[base];
+        int dst = path[base + 1];
         subpath_key.first_node = src;
         subpath_key.bit_vector[src] = true;
         subpath_cost += cost_graph[src][dst].weight;
@@ -2553,6 +2559,26 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
 
         subpath_stats->threads[thread_id].checks++;
         subpath_stats->threads[thread_id].by_depth[length].checks++;
+
+        /**
+         * If the middle nodes of the subpath, the nodes excluding the start and end,
+         * can only be ordered in one possible way to meet precedence constraints,
+         * then there is only one possible subpath matching this key, so we don't need
+         * to check the history table for a superior subpath.
+         */
+        if (one_possible_ordering) {
+            int mid_src = path[base + 1]; // first node of middle nodes
+            int mid_dst = path[base + 2]; // second node of middle nodes
+            if (!is_dependent_graph[mid_dst][mid_src]) {
+                one_possible_ordering = false; 
+                // in this case, the second node is not dependent on the first node
+                // the first node could be placed after the second node, which is a different ordering
+            } else {
+                subpath_stats->threads[thread_id].checks_one_ordering++;
+                subpath_stats->threads[thread_id].by_depth[length].checks_one_ordering++;
+                continue;
+            }
+        }
 
         /* Retrieve subpath from subpath history table */
         SubpathHistoryNode *history_node;

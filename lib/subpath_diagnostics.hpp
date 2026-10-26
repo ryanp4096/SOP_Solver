@@ -10,6 +10,7 @@ struct subpath_depth_data {
     unsigned long long checks_equal{0}; // there was an existing matching subpath with equal cost (can't prune)
     unsigned long long checks_improved{0}; // there was an existing matching subpath, but it was inferior to the current subpath. this could be a thread stop once that is implemented
     unsigned long long checks_no_match{0}; // there was not an existing matching subpath
+    unsigned long long checks_one_ordering{0}; // there was only one possible ordering of nodes for this subpath that meets precedence constraints
 };
 
 struct subpath_thread_data {
@@ -22,6 +23,7 @@ struct subpath_thread_data {
     unsigned long long checks_equal{0};
     unsigned long long checks_improved{0};
     unsigned long long checks_no_match{0};
+    unsigned long long checks_one_ordering{0};
 
     std::vector<subpath_depth_data> by_depth;
 
@@ -54,6 +56,7 @@ struct subpath_data {
             totals.checks_equal += threads[i].checks_equal;
             totals.checks_improved += threads[i].checks_improved;
             totals.checks_no_match += threads[i].checks_no_match;
+            totals.checks_one_ordering += threads[i].checks_one_ordering;
             
             for (unsigned j = 0; j < instance_size + 1; j++) {
                 totals.by_depth[j].checks += threads[i].by_depth[j].checks;
@@ -61,6 +64,7 @@ struct subpath_data {
                 totals.by_depth[j].checks_equal += threads[i].by_depth[j].checks_equal;
                 totals.by_depth[j].checks_improved += threads[i].by_depth[j].checks_improved;
                 totals.by_depth[j].checks_no_match += threads[i].by_depth[j].checks_no_match;
+                totals.by_depth[j].checks_one_ordering += threads[i].by_depth[j].checks_one_ordering;
             }
         }
 
@@ -73,28 +77,31 @@ struct subpath_data {
         std::cout << "   Pruned: " << totals.checks_pruned << std::endl;
         std::cout << "   Not Pruned (Equal Cost): " << totals.checks_equal << std::endl;
         std::cout << "   Not Pruned (Improvement): " << totals.checks_improved << std::endl;
-        std::cout << "   Not Pruned (No Match): " << totals.checks_no_match << std::endl << std::endl;
+        std::cout << "   Not Pruned (No Match): " << totals.checks_no_match << std::endl;
+        std::cout << "   Not Pruned (One Ordering): " << totals.checks_one_ordering << std::endl << std::endl;
 
         std::cout << "Checks By Depth: " << std::endl;
 
         // Readable
-        // for (unsigned j = 0; j < instance_size + 1; j++) {
-        //     std::cout << "   Depth " << j << ": ";
-        //     std::cout << totals.by_depth[j].checks << " (";
-        //     std::cout << "P: " << totals.by_depth[j].checks_pruned;
-        //     std::cout << " Eq: " << totals.by_depth[j].checks_equal;
-        //     std::cout << " Imp: " << totals.by_depth[j].checks_improved;
-        //     std::cout << " NM: " << totals.by_depth[j].checks_no_match;
-        //     std::cout << ")" << std::endl;
-        // }
+        for (unsigned j = 0; j < instance_size + 1; j++) {
+            std::cout << "   Depth " << j << ": ";
+            std::cout << totals.by_depth[j].checks << " (";
+            std::cout << "P: " << totals.by_depth[j].checks_pruned;
+            std::cout << " Eq: " << totals.by_depth[j].checks_equal;
+            std::cout << " Imp: " << totals.by_depth[j].checks_improved;
+            std::cout << " NM: " << totals.by_depth[j].checks_no_match;
+            std::cout << " OO: " << totals.by_depth[j].checks_one_ordering;
+            std::cout << ")" << std::endl;
+        }
 
         // Table (for spreadsheets)
-        std::cout << "Depth\tChecks\tPruned\tEqual\tImproved\tNoMatch" << std::endl;
-        for (unsigned j = 0; j < instance_size + 1; j++) {
-            std::cout << j << "\t" << totals.by_depth[j].checks << "\t";
-            std::cout << totals.by_depth[j].checks_pruned << "\t" << totals.by_depth[j].checks_equal << "\t";
-            std::cout << totals.by_depth[j].checks_improved << "\t" << totals.by_depth[j].checks_no_match << std::endl;
-        }
+        // std::cout << "Depth\tChecks\tPruned\tEqual\tImproved\tNoMatch\tOneOrdering" << std::endl;
+        // for (unsigned j = 0; j < instance_size + 1; j++) {
+        //     std::cout << j << "\t" << totals.by_depth[j].checks << "\t";
+        //     std::cout << totals.by_depth[j].checks_pruned << "\t" << totals.by_depth[j].checks_equal << "\t";
+        //     std::cout << totals.by_depth[j].checks_improved << "\t" << totals.by_depth[j].checks_no_match << "\t";
+        //     std::cout << totals.by_depth[j].checks_one_ordering << std::endl;
+        // }
 
         std::cout << std::endl << "=====================================" << std::endl;
     }
