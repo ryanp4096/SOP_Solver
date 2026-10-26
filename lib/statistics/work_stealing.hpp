@@ -35,29 +35,27 @@ struct stats_work_stealing_thread {
 };
 
 struct stats_work_stealing {
-    std::vector<stats_work_stealing_thread> threads{};
+    std::vector<const stats_work_stealing_thread *> threads;
     unsigned thread_count;
 
     stats_work_stealing(unsigned thread_count)
-        : thread_count{thread_count}
-    {
-        threads.reserve(thread_count);
-        for (unsigned i = 0; i < thread_count; i++) {
-            threads.push_back(stats_work_stealing_thread(thread_count));
-        }
+        : threads{thread_count}, thread_count{thread_count} {}
+
+    void register_thread(unsigned thread_id, const stats_work_stealing_thread &thread) {
+        threads[thread_id] = &thread;
     }
 
     double total_time_stealing() {
         double total = 0.0;
         for (unsigned i = 0; i < thread_count; i++)
-            total += threads[i].time_stealing;
+            if (threads[i] != nullptr) total += (*threads[i]).time_stealing;
         return total;
     }
 
     void print_results() {
         stats_work_stealing_thread totals{thread_count};
         for (unsigned i = 0; i < thread_count; i++)
-            totals += threads[i];
+            if (threads[i] != nullptr) totals += *threads[i];
         
         std::cout << "WORK STEALING\n";
         std::cout << "Attempts:         " << totals.attempts << "\n";
@@ -65,8 +63,8 @@ struct stats_work_stealing {
         std::cout << "By Thread:\n";
         std::cout << "    Stole:        ";
         for (unsigned i = 0; i < thread_count - 1; i++)
-            std::cout << threads[i].success << ", ";
-        std::cout << threads[thread_count - 1].success << "\n";
+            if (threads[i] != nullptr) std::cout << (*threads[i]).success << ", ";
+        if (threads[thread_count - 1] != nullptr) std::cout << (*threads[thread_count - 1]).success << "\n";
         std::cout << "    Stolen From:  ";
         for (unsigned i = 0; i < thread_count - 1; i++)
             std::cout << totals.by_target[i].success << ", ";

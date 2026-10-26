@@ -60,23 +60,21 @@ struct stats_nodes_thread {
 
 /* Enumerated nodes statistics for a run */
 struct stats_nodes {
-    std::vector<stats_nodes_thread> threads{};
+    std::vector<const stats_nodes_thread *> threads;
     unsigned thread_count;
     unsigned instance_size;
 
     stats_nodes(unsigned thread_count, unsigned instance_size)
-        : thread_count{thread_count}, instance_size{instance_size}
-    {
-        threads.reserve(thread_count);
-        for (unsigned i = 0; i < thread_count; i++) {
-            threads.push_back(stats_nodes_thread(instance_size));
-        }
+        : threads{thread_count}, thread_count{thread_count}, instance_size{instance_size} {}
+
+    void register_thread(unsigned thread_id, const stats_nodes_thread &thread) {
+        threads[thread_id] = &thread;
     }
 
     void print_results() {
         stats_nodes_thread totals{instance_size};
         for (unsigned i = 0; i < thread_count; i++)
-            totals += threads[i];
+            if (threads[i] != nullptr) totals += *threads[i];
         
         unsigned long long remaining = totals.enumerated;
 

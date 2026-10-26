@@ -28,22 +28,20 @@ struct stats_prefixes_thread {
 };
 
 struct stats_prefixes {
-    std::vector<stats_prefixes_thread> threads{};
+    std::vector<const stats_prefixes_thread *> threads;
     unsigned thread_count;
 
     stats_prefixes(unsigned thread_count)
-        : thread_count{thread_count}
-    {
-        threads.reserve(thread_count);
-        for (unsigned i = 0; i < thread_count; i++) {
-            threads.push_back(stats_prefixes_thread());
-        }
+        : threads{thread_count}, thread_count{thread_count} {}
+
+    void register_thread(unsigned thread_id, const stats_prefixes_thread &thread) {
+        threads[thread_id] = &thread;
     }
 
     void print_results() {
         stats_prefixes_thread totals{};
         for (unsigned i = 0; i < thread_count; i++)
-            totals += threads[i];
+            if (threads[i] != nullptr) totals += *threads[i];
         
         std::cout << "PREFIX HISTORY\n";
         std::cout << "Checks:            " << totals.checks << "\n";

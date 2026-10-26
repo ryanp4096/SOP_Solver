@@ -110,16 +110,14 @@ struct stats_cpu_timer_thread {
 };
 
 struct stats_cpu_timer {
-    std::vector<stats_cpu_timer_thread> threads{};
+    std::vector<const stats_cpu_timer_thread *> threads;
     unsigned thread_count;
 
     stats_cpu_timer(unsigned thread_count)
-        : thread_count{thread_count}
-    {
-        threads.reserve(thread_count);
-        for (unsigned i = 0; i < thread_count; i++) {
-            threads.push_back(stats_cpu_timer_thread());
-        }
+        : threads{thread_count}, thread_count{thread_count} {}
+
+    void register_thread(unsigned thread_id, const stats_cpu_timer_thread &thread) {
+        threads[thread_id] = &thread;
     }
 
     void print_results() {
@@ -127,7 +125,7 @@ struct stats_cpu_timer {
         stats_cpu_timer_thread totals{};
 
         for (unsigned i = 0; i < thread_count; i++)
-            totals += threads[i];
+            if (threads[i] != nullptr) totals += *threads[i];
         
         std::cout << "CPU TIMER\n";
 

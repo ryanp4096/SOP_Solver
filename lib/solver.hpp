@@ -147,12 +147,12 @@ private:
         .bit_vector{}
     };
 
-    const stats_thread stats;
+    stats_thread stats;
 
     // Trace File
     Trace trace;
 public:
-    solver_thread(const solver &parent, int thread_id, const stats_thread &stats) : thread_id{thread_id}, stats{stats} {}
+    solver_thread(const solver &parent, int thread_id, unsigned instance_size) : thread_id{thread_id}, stats{instance_size} {}
 private:
     /* To process the best tour path provided by LKH */
     void processBestTour();

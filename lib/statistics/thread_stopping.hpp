@@ -20,22 +20,20 @@ struct stats_thread_stopping_thread {
 };
 
 struct stats_thread_stopping {
-    std::vector<stats_thread_stopping_thread> threads{};
+    std::vector<const stats_thread_stopping_thread *> threads;
     unsigned thread_count;
 
     stats_thread_stopping(unsigned thread_count)
-        : thread_count{thread_count}
-    {
-        threads.reserve(thread_count);
-        for (unsigned i = 0; i < thread_count; i++) {
-            threads.push_back(stats_thread_stopping_thread());
-        }
+        : threads{thread_count}, thread_count{thread_count} {}
+
+    void register_thread(unsigned thread_id, const stats_thread_stopping_thread &thread) {
+        threads[thread_id] = &thread;
     }
 
     void print_results() {
         stats_thread_stopping_thread totals{};
         for (unsigned i = 0; i < thread_count; i++)
-            totals += threads[i];
+            if (threads[i] != nullptr) totals += *threads[i];
         
         std::cout << "THREAD STOPPING\n";
         std::cout << "Stops Requested:       " << totals.requests << "\n";
