@@ -641,6 +641,7 @@ void solver::solve()
     // std::cout << "Number of times Best suffix entry added: " << numberOfTimesBestSuffixEntryAdded << endl;
     std::cout << "Number of times Best suffix entry updated: " << numberOfTimesBestSuffixEntryUpdated.load() << endl;
     std::cout << "Number of times BB found prefix cost better than LKH: " << numberOfTimesBetterThanLKH.load() << endl;
+    history_table.print_search_info();
 
     double percent_time_active = (((double)total_time / 1000000) * 32 - global_stats->work_stealing.total_time_stealing()) / ((double)total_time / 1000000 * 32);
     std::cout << "active time: " << percent_time_active << endl;
@@ -1395,7 +1396,7 @@ void solver_thread::processBestTour()
                         if (print_each) std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                     } else {
                         bool inserted;
-                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpathKey, depth, subpath_cost, thread_id, &inserted);
+                        SubpathHistoryNode *history_node = history_table.retrieve_or_insert_subpath(subpathKey, depth, subpath_cost, thread_id, &inserted, stats);
                         if (inserted) {
                             subpath_stats.inserted++;
                             if (print_each) std::cout << "[processBestTour] Subpath Added - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
@@ -2473,7 +2474,7 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         } else {
             bool inserted;
             stats.cpu_timer.subpath_history_lookup.start_timer();
-            history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted);
+            history_node = history_table.retrieve_or_insert_subpath(subpath_key, length, subpath_cost, thread_id, &inserted, stats);
             stats.cpu_timer.subpath_history_lookup.stop_timer();
             if (history_node == NULL) {
                 /* Subpath not found in history table (not inserted) */

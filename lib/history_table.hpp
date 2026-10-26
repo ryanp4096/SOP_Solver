@@ -9,6 +9,7 @@
 
 // #include <boost/smart_ptr/detail/spinlock.hpp>
 #include <boost/dynamic_bitset.hpp>
+#include "statistics/stats.hpp"
 
 #include "history.hpp"
 #include "synchronization.hpp"
@@ -57,7 +58,7 @@ struct SubpathEntry {
 };
 
 /* A bucket in the subpath history table is an atomic pointer to the first entry in the linked list */
-typedef atomic<SubpathEntry *> SubpathBucket;
+typedef SubpathEntry * SubpathBucket;
 
 /* Contains everything needed for retrieving and allocating to buckets of prefix entries */
 struct PrefixMap {
@@ -93,7 +94,7 @@ public:
         }
     }
 
-    SubpathHistoryNode *insert(SubpathKey &key, unsigned int length, int subpath_cost) {
+    SubpathHistoryNode *insert(const SubpathKey &key, unsigned int length, int subpath_cost) {
         LKHSubpathEntry *entry = allocator.allocate();
         entry->key = key;
         entry->node.subpath_cost = subpath_cost;
@@ -105,7 +106,7 @@ public:
         data_available = true;
     }
 
-    SubpathHistoryNode *retrieve(SubpathKey &key, unsigned int length, bool *can_break = NULL) {
+    SubpathHistoryNode *retrieve(const SubpathKey &key, unsigned int length, bool *can_break = NULL) {
         if (can_break != NULL) *can_break = false;
         if (!data_available) {
             if (can_break != NULL) *can_break = true;
@@ -229,7 +230,7 @@ public:
      * @param thread_id The id of the thread inserting this entry
      * @return Pointer to the inserted history node, or NULL if table is full
      */
-    SubpathHistoryNode *insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id);
+    SubpathHistoryNode *insert_subpath(const SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id);
 
     /**
      * @brief Retrieve a subpath entry corresponding to a key
@@ -238,7 +239,7 @@ public:
      * @param can_break Return variable. If lkh_subpaths_only is enabled, set to true if no other subpaths that contain this subpath can be matched
      * @return Pointer to the found history node, or NULL if not found
      */
-    SubpathHistoryNode *retrieve_subpath(SubpathKey &key, unsigned int depth, bool *can_break = NULL);
+    SubpathHistoryNode *retrieve_subpath(const SubpathKey &key, unsigned int depth, bool *can_break = NULL);
 
     /**
      * @brief Try to retrieve a subpath entry and insert if not found
@@ -250,7 +251,7 @@ public:
      * @param can_break Return variable. If lkh_subpaths_only is enabled, set to true if no other subpaths that contain this subpath can be matched
      * @return Pointer to the inserted history node, or NULL if table is full
      */
-    SubpathHistoryNode *retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, bool *can_break = NULL);
+    SubpathHistoryNode *retrieve_or_insert_subpath(const SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, stats_thread &stats, bool *can_break = NULL);
 
     /* Checks for full groups and blocks them, if there are multiple groups */
     bool check_and_manage_memory(int depth, float *updatedMemLimit, bool *is_all_table_blocked);
@@ -270,6 +271,8 @@ public:
     /* If lkh_subpaths_only enabled, registers that all lkh subpaths have been inserted */
     void complete_lkh_subpath_insertion() { lkh_subpath_table.complete_insertion(); }
 
+    void print_search_info();
+
 private:
     /**
      * @brief Search a prefix bucket for entries matching a key
@@ -285,7 +288,7 @@ private:
      * @param key The key to search for
      * @return A pointer to the found entry, or NULL if not found
      */
-    SubpathEntry *search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key);
+    SubpathEntry *search_subpath_bucket(SubpathBucket &bucket, const SubpathKey &key);
 
     /**
      * @brief Insert an entry into a prefix bucket
@@ -311,7 +314,7 @@ private:
      * @param subpath_cost The cost to be stored in the inserted entry
      * @return A pointer to the inserted entry, or NULL if could not be inserted
      */
-    SubpathEntry *insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost);
+    SubpathEntry *insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, const SubpathKey &key, int subpath_cost);
 };
 
 #endif

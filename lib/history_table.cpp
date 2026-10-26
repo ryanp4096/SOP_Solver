@@ -168,7 +168,7 @@ HistoryNode *History_Table::retrieve(PrefixKey &key, unsigned int depth)
 }
 
 
-SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id)
+SubpathHistoryNode *History_Table::insert_subpath(const SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id)
 {
     if (subpath_history_setting == SUBPATHS_OFF) return NULL;
 
@@ -196,7 +196,7 @@ SubpathHistoryNode *History_Table::insert_subpath(SubpathKey &key, unsigned int 
 }
 
 
-SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, bool *can_break)
+SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(const SubpathKey &key, unsigned int depth, int subpath_cost, unsigned int thread_id, bool *inserted, stats_thread &stats, bool *can_break)
 {
     if (subpath_history_setting == SUBPATHS_OFF) return NULL;
 
@@ -212,27 +212,33 @@ SubpathHistoryNode *History_Table::retrieve_or_insert_subpath(SubpathKey &key, u
     SubpathMap &map = subpath_maps[group_index];
     
     /* Calculate hash to get bucket index of entry */
+    stats.cpu_timer.subpath_history_hash.start_timer();
     size_t val = hash<boost::dynamic_bitset<>>{}(key.bit_vector);
     int bucket_index = (val + key.first_node * 1583 + key.last_node * 1217) % num_buckets;
+    stats.cpu_timer.subpath_history_hash.stop_timer();
 
     spin_lock &lock = map.locks[bucket_index / COVER_AREA];
     lock.lock();
 
     /* Search bucket for entry */
+    stats.cpu_timer.subpath_history_search.start_timer();
     SubpathEntry *found_entry = search_subpath_bucket(map.buckets[bucket_index], key);
+    stats.cpu_timer.subpath_history_search.stop_timer();
     if (found_entry != NULL) {
         lock.unlock();
         return &found_entry->node;
     }
 
     /* If not in bucket, insert into bucket */
+    stats.cpu_timer.subpath_history_insert.start_timer();
     SubpathEntry *entry = insert_subpath_entry(map, group_index, thread_id, bucket_index, key, subpath_cost);
+    stats.cpu_timer.subpath_history_insert.stop_timer();
     lock.unlock();
     *inserted = true;
     return entry == NULL ? NULL : &entry->node;
 }
 
-SubpathHistoryNode *History_Table::retrieve_subpath(SubpathKey &key, unsigned int depth, bool *can_break)
+SubpathHistoryNode *History_Table::retrieve_subpath(const SubpathKey &key, unsigned int depth, bool *can_break)
 {
     if (subpath_history_setting == SUBPATHS_OFF) return NULL;
 
@@ -279,12 +285,23 @@ PrefixEntry *History_Table::search_prefix_bucket(PrefixBucket &bucket, PrefixKey
     return NULL;
 }
 
-SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, SubpathKey &key)
+static std::atomic<unsigned long long> subpath_searches{0};
+static std::atomic<unsigned long long> subpath_checks{0};
+
+void History_Table::print_search_info() {
+    std::cout << "Searches: " << subpath_searches << std::endl;
+    std::cout << "Checks: " << subpath_checks << std::endl;
+    std::cout << "Average Per Search: " << (0.0 + subpath_checks) / subpath_searches << std::endl;
+}
+
+SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, const SubpathKey &key)
 {
-    SubpathEntry *first = bucket.load();
+    subpath_searches++;
+    SubpathEntry *first = bucket;
     if (first == NULL) return NULL;
 
     if (first->next == NULL) {
+        subpath_checks++;
         if (
             key.first_node == first->key.first_node &&
             key.last_node == first->key.last_node &&
@@ -296,6 +313,7 @@ SubpathEntry *History_Table::search_subpath_bucket(SubpathBucket &bucket, Subpat
         }
     }
     for (SubpathEntry *entry = first; entry != NULL; entry = entry->next) {
+        subpath_checks++;
         if (
             key.first_node == entry->key.first_node &&
             key.last_node == entry->key.last_node &&
@@ -347,7 +365,7 @@ PrefixEntry *History_Table::insert_prefix_entry(PrefixMap &map, int group_index,
     return entry;
 }
 
-SubpathEntry *History_Table::insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, SubpathKey &key, int subpath_cost)
+SubpathEntry *History_Table::insert_subpath_entry(SubpathMap &map, int group_index, unsigned int thread_id, size_t bucket_index, const SubpathKey &key, int subpath_cost)
 {
     if (limit_insertion) return NULL;
     if (current_size >= max_size) {

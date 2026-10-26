@@ -18,14 +18,16 @@
 
 struct stats_cpu_timer_segment {
     std::string name;
+    const bool enabled;
     unsigned long long total_count{0}; // total number of times this code segment has been timed
     unsigned long long total_time{0};  // total cpu cycles this segment has executed for
     unsigned long long start_time{0};  // cpu cycle count when start was called for this segment
 
-    stats_cpu_timer_segment(const std::string &name) : name{name} {}
+    stats_cpu_timer_segment(const std::string &name, bool enabled = true) : name{name}, enabled{enabled} {}
 
     inline void start_timer() {
         #ifdef ENABLE_CPU_TIMER
+        if (!enabled) return;
         unsigned temp;
         _mm_mfence();
         start_time = __rdtscp(&temp);
@@ -35,6 +37,7 @@ struct stats_cpu_timer_segment {
 
     inline void stop_timer() {
         #ifdef ENABLE_CPU_TIMER
+        if (!enabled) return;
         unsigned temp;
         _mm_mfence();
         unsigned long long end_time = __rdtscp(&temp);
@@ -52,26 +55,28 @@ struct stats_cpu_timer_segment {
 };
 
 struct stats_cpu_timer_thread {
-    stats_cpu_timer_segment enumerate_node_start{"Node Start"};
-    stats_cpu_timer_segment enumerate_prefix_history{"Prefix History"};
+    stats_cpu_timer_segment enumerate_node_start{"Node Start", false};
+    stats_cpu_timer_segment enumerate_prefix_history{"Prefix History", false};
     stats_cpu_timer_segment enumerate_subpath_history{"Subpath History"};
-    stats_cpu_timer_segment enumerate_node_end{"Node End"};
-    stats_cpu_timer_segment enumerate_sort_pool{"Sort Pool"};
-    stats_cpu_timer_segment enumerate_thread_stop{"Thread Stopping"};
-    stats_cpu_timer_segment enumerate_recursive_start{"Recursive Start"};
-    stats_cpu_timer_segment enumerate_recursive_end{"Recursive End"};
+    stats_cpu_timer_segment enumerate_node_end{"Node End", false};
+    stats_cpu_timer_segment enumerate_sort_pool{"Sort Pool", false};
+    stats_cpu_timer_segment enumerate_thread_stop{"Thread Stopping", false};
+    stats_cpu_timer_segment enumerate_recursive_start{"Recursive Start", false};
+    stats_cpu_timer_segment enumerate_recursive_end{"Recursive End", false};
 
-    stats_cpu_timer_segment lower_bound{"Lower Bound"};
+    stats_cpu_timer_segment lower_bound{"Lower Bound", false};
 
-    stats_cpu_timer_segment thread_stop_request{"Thread Stop Request"};
-    stats_cpu_timer_segment thread_stop_check{"Thread Stop Check"};
+    stats_cpu_timer_segment thread_stop_request{"Thread Stop Request", false};
+    stats_cpu_timer_segment thread_stop_check{"Thread Stop Check", false};
 
-    stats_cpu_timer_segment prefix_history_lookup{"Prefix History Lookup"};
-    stats_cpu_timer_segment prefix_history_entry{"Prefix History Entry"};
+    stats_cpu_timer_segment prefix_history_lookup{"Prefix History Lookup", false};
+    stats_cpu_timer_segment prefix_history_entry{"Prefix History Entry", false};
     
     stats_cpu_timer_segment subpath_history_lookup{"Subpath History Lookup"};
     stats_cpu_timer_segment subpath_history_entry{"Subpath History Entry"};
-
+    stats_cpu_timer_segment subpath_history_hash{"Subpath History Hash"};
+    stats_cpu_timer_segment subpath_history_search{"Subpath History Search"};
+    stats_cpu_timer_segment subpath_history_insert{"Subpath History Insert"};
 
     std::vector<stats_cpu_timer_segment *> segments() {
         return {
@@ -80,7 +85,7 @@ struct stats_cpu_timer_thread {
             &enumerate_recursive_start, &enumerate_recursive_end,
             &lower_bound, &thread_stop_request, &thread_stop_check,
             &prefix_history_lookup, &prefix_history_entry, &subpath_history_lookup,
-            &subpath_history_entry
+            &subpath_history_entry, &subpath_history_hash, &subpath_history_search, &subpath_history_insert
         };
     }
 
@@ -104,6 +109,9 @@ struct stats_cpu_timer_thread {
     
         subpath_history_lookup += t.subpath_history_lookup;
         subpath_history_entry += t.subpath_history_entry;
+        subpath_history_hash += t.subpath_history_hash;
+        subpath_history_search += t.subpath_history_search;
+        subpath_history_insert += t.subpath_history_insert;
 
         return *this;
     }
@@ -135,6 +143,7 @@ struct stats_cpu_timer {
         std::cout << std::setw(18) << std::right << "TOTAL TIME" << std::endl;
 
         for (stats_cpu_timer_segment *segment : totals.segments()) {
+            if (!segment->enabled) continue;
             unsigned long long average = 0;
             if (segment->total_count > 0) average = segment->total_time / segment->total_count;
 
