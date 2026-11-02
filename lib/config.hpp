@@ -78,6 +78,8 @@ struct Config {
        Cannot be used in regular runs as the expected cost is unknown for new instances */
     int expected_lkh_cost = 0;
 
+    bool manual_short_subpaths = false;
+
     /* UNUSED */
 
     int assign_workload_level = 150;

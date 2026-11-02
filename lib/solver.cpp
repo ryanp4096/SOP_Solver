@@ -53,6 +53,7 @@ static bool enable_subpath_history_table = true;
 static int subpath_length_limit = INT_MAX;
 static bool lkh_subpaths_only = false;
 static int expected_lkh_cost = 0;
+static bool manual_short_subpaths = false;
 
 // derived attributes
 static int max_edge_weight = 0; // highest weight of any edge in the cost graph
@@ -465,6 +466,7 @@ void solver::assign_parameter(Config config)
     subpath_length_limit = config.subpath_length_limit;
     lkh_subpaths_only = config.lkh_subpaths_only;
     expected_lkh_cost = config.expected_lkh_cost;
+    manual_short_subpaths = config.manual_short_subpaths;
 
     return;
 }
@@ -2578,6 +2580,30 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
                 subpath_stats->threads[thread_id].by_depth[length].checks_one_ordering++;
                 continue;
             }
+        }
+
+        if (manual_short_subpaths && length == 4) {
+            int n0 = path[base];
+            int n1 = path[base + 1];
+            int n2 = path[base + 2];
+            int n3 = path[base + 3];
+            /* The cost of the path with the middle 2 nodes swapped */
+            int alt_subpath_cost = cost_graph[n0][n2].weight + cost_graph[n2][n1].weight + cost_graph[n1][n3].weight;
+
+            if (subpath_cost > alt_subpath_cost) {
+                subpath_stats->threads[thread_id].checks_pruned++;
+                subpath_stats->threads[thread_id].by_depth[length].checks_pruned++;
+                return true;
+
+            } else if (subpath_cost < alt_subpath_cost) {
+                subpath_stats->threads[thread_id].checks_improved++;
+                subpath_stats->threads[thread_id].by_depth[length].checks_improved++;
+
+            } else {
+                subpath_stats->threads[thread_id].checks_equal++;
+                subpath_stats->threads[thread_id].by_depth[length].checks_equal++;
+            }
+            continue;
         }
 
         /* Retrieve subpath from subpath history table */
