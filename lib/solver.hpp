@@ -28,7 +28,7 @@
 #include <boost/dynamic_bitset.hpp>
 
 #include "timer.hpp"
-#include "history_table.hpp"
+#include "history_table/history_table.hpp"
 #include "local_pool.hpp"
 #include "graph.hpp"
 #include "hungarian.hpp"
@@ -77,12 +77,14 @@ struct sop_state
 
     Hungarian hungarian_solver;
 
-    PrefixKey history_key;
+    HistoryKey history_key;
     // HistoryNode* cur_parent_hisnode = NULL;
 
     int enumeration_depth = 0; // the depth of the enumeration recursion stack
 
     unsigned long long work_above = ULLONG_MAX;
+
+    Hash128 hash;
     // int initial_depth = 0; //depth at which enumeration began once GPQ was initially filled
     // int suffix_cost = 0;
     // unsigned long long current_node_value = -1; //the portion out of ULLONG_MAX of the working tree that is under this node (the partial path represented by this state)
@@ -102,7 +104,7 @@ private:
     // Safe because each thread gets its own solver instance
     std::deque<path_node> ready_list;
     // Reuse subpath bit vector and subpath key to avoid repeated allocations
-    SubpathKey subpath_key{
+    HistoryKey subpath_key{
         .bit_vector{}
     };
     
@@ -180,13 +182,13 @@ private:
         entry - a return variable, a pointer to the history node corresponding to this path
         cost - the cost of the current path
         Return - true if this node still needs to be processed, false if it should be pruned */
-    bool history_utilization(PrefixKey &key, int cost, int *lowerbound, bool *found, HistoryNode **entry, int source, int destination);
+    bool history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, PrefixEntry **entry, int source, int destination);
     /* Add a new entry to the history table.
         key - the history key corresponding to the partial path this entry represents
         lower_bound - the lower bound cost of a complete solution beginning with this path
         entry - a return variable, holds a pointer to the entry created, unless NULL is passed
         backtracked - if the subtree under this node has already been fully explored */
-    void push_to_history_table(PrefixKey &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
+    // void push_to_history_table(PrefixKey &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
 
 
     /* returns true on success */
@@ -209,7 +211,7 @@ private:
     void print_state(sop_state &state);
 
     // For checking, if any thread requested another thread to stop
-    bool check_stop_request(PrefixKey history_key, std::vector<int> sequence, bool *prefixPathMatched);
+    bool check_stop_request(HistoryKey history_key, std::vector<int> sequence, bool *prefixPathMatched);
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
