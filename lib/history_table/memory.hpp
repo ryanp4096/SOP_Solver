@@ -119,24 +119,24 @@ public:
             std::cout << "[HistoryTableMemory] Using one NUMA node or NUMA nodes not found" << std::endl;
         }
 
-        /* Touch every page */
-        unsigned char* const block_start = static_cast<unsigned char*>(memory_start);
-        const size_t small_page_bytes = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-        const size_t huge_pages_per_thread = (memory_bytes / huge_page_bytes) / options.thread_count;
-        const size_t bytes_per_thread = huge_pages_per_thread * huge_page_bytes;
+        // /* Touch every page */
+        // unsigned char* const block_start = static_cast<unsigned char*>(memory_start);
+        // const size_t small_page_bytes = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        // const size_t huge_pages_per_thread = (memory_bytes / huge_page_bytes) / options.thread_count;
+        // const size_t bytes_per_thread = huge_pages_per_thread * huge_page_bytes;
 
-        std::vector<std::thread> threads;
-        for (unsigned i = 0; i < options.thread_count; i++) {
-            const size_t first_byte = i * bytes_per_thread;
-            const size_t end_byte = (i == options.thread_count - 1) ? memory_bytes : first_byte + bytes_per_thread;
-            threads.emplace_back([=] {
-                volatile unsigned char* bytes = block_start;
-                for (size_t offset = first_byte; offset < end_byte; offset += small_page_bytes) {
-                    bytes[offset] = 0; // Touch one byte in each small page
-                }
-            });
-        }
-        for (std::thread& thread : threads) thread.join();
+        // std::vector<std::thread> threads;
+        // for (unsigned i = 0; i < options.thread_count; i++) {
+        //     const size_t first_byte = i * bytes_per_thread;
+        //     const size_t end_byte = (i == options.thread_count - 1) ? memory_bytes : first_byte + bytes_per_thread;
+        //     threads.emplace_back([=] {
+        //         volatile unsigned char* bytes = block_start;
+        //         for (size_t offset = first_byte; offset < end_byte; offset += small_page_bytes) {
+        //             bytes[offset] = 0; // Touch one byte in each small page
+        //         }
+        //     });
+        // }
+        // for (std::thread& thread : threads) thread.join();
     }
 
     /**
