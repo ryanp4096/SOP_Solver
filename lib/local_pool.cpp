@@ -1,188 +1,183 @@
 #include "local_pool.hpp"
-// static bool isPrinted = false;
-// static bool isPrintedLast = false;
-local_pool::local_pool(int thread_count)
-{
-    locks = std::vector<spin_lock>(thread_count);
-    pools = std::vector<std::deque<std::deque<path_node>>>(thread_count);
-    depths = std::vector<int>(thread_count);
-    this->thread_count = thread_count;
+
+std::vector<int> local_pool_node_ref::sequence() const {
+    std::vector<int> path{};
+    path.reserve(depth);
+    for (int i = 0; i < depth - 1; i++) {
+        path.push_back(thread->current_path[i]);
+    }
+    path.push_back(taken_node);
+    return path;
 }
 
-// void local_pool::print_top_sequence_sizes_end(int thread_total)
-// {
-//     std::vector<int> results;
-//     results.reserve(thread_total);
+boost::dynamic_bitset<> local_pool_node_ref::bit_vector() const {
+    boost::dynamic_bitset<> bit_vector(thread->current_key.size(), false);
+    for (int i = 0; i < depth - 1; i++) {
+        bit_vector[thread->current_path[i]] = true;
+    }
+    bit_vector[taken_node] = true;
+    return bit_vector;
+}
 
-//     if (!isPrintedLast)
-//     {
-//         isPrintedLast = true;
-//         for (int i = 0; i < thread_total; i++)
-//         {
-//             locks[i].lock(); // Lock the pool to ensure thread safety
+void local_pool_node_ref::to_path_node(path_node &node) const {
+    node.sequence = std::move(sequence());
+    node.lower_bound = lower_bound();
+    node.origin_node = depth > 1 ? node.sequence.at(1) : 0;
+    node.current_node_value = current_node_value();
+    node.history_key.last_node = taken_node;
+    node.history_key.bit_vector = std::move(bit_vector());
+}
 
-//             if (pools[i].size() > 0)
-//             {
-//                 while (pools[i].front().empty() && pools[i].size() > 1)
-//                 {
-//                     pools[i].pop_front();
-//                 }
-//                 if (pools[i].size() <= 1 && pools[i].front().empty())
-//                 {
-//                     results.push_back(-2); // Top deque is empty
-//                 }
-//                 else
-//                 {
-//                     // Access the top deque and get the first element in it
-//                     const path_node &top_node = pools[i].front().front();
-//                     // Add the size of the sequence to results
-//                     results.push_back(top_node.sequence.size());
-//                 }
-//             }
-//             else
-//             {
-//                 results.push_back(-1); // Pool is empty
-//             }
 
-//             locks[i].unlock(); // Unlock the pool after accessing
-//         }
+void local_pool_list::clear() {
+    queue.clear();
+    present.reset();
+}
 
-//         // Print all collected results as a comma-separated string
-//         for (size_t i = 0; i < results.size(); ++i)
-//         {
-//             std::cout << results[i];
-//             if (i < results.size() - 1)
-//                 std::cout << ",";
-//         }
-//         std::cout << std::endl;
-//     }
-// }
+void local_pool_list::push_back(int taken_node, const local_pool_node &node) {
+    present[taken_node] = true;
+    nodes[taken_node] = node;
+    queue.push_back(taken_node);
+}
 
-// void local_pool::print_top_sequence_sizes(int thread_total)
-// {
-//     std::vector<int> results;
-//     results.reserve(thread_total);
+void local_pool_list::push_back(int taken_node, local_pool_node &&node) {
+    present[taken_node] = true;
+    nodes[taken_node] = node;
+    queue.push_back(taken_node);
+}
 
-//     if (!isPrinted)
-//     {
-//         isPrinted = true;
-//         for (int i = 0; i < thread_total; i++)
-//         {
-//             locks[i].lock(); // Lock the pool to ensure thread safety
+void local_pool_list::set_node_value(unsigned long long next_work_above) {
+    for (size_t i = 0; i < queue.size(); i++)
+        nodes[queue[i]].current_node_value = next_work_above;
+}
 
-//             if (pools[i].size() > 0)
-//             {
-//                 while (pools[i].front().empty() && pools[i].size() > 1)
-//                 {
-//                     pools[i].pop_front();
-//                 }
-//                 if (pools[i].size() <= 1 && pools[i].front().empty())
-//                 {
-//                     results.push_back(-2); // Top deque is empty
-//                 }
-//                 else
-//                 {
-//                     // Access the top deque and get the first element in it
-//                     const path_node &top_node = pools[i].front().front();
-//                     // Add the size of the sequence to results
-//                     results.push_back(top_node.sequence.size());
-//                 }
-//             }
-//             else
-//             {
-//                 results.push_back(-1); // Pool is empty
-//             }
+void local_pool_list::sort() {
+    if (queue.empty()) return;
+    std::sort(
+        queue.begin(), queue.end(),
+        [&](int a, int b){ return nodes[a].lower_bound > nodes[b].lower_bound; }
+    );
+}
 
-//             locks[i].unlock(); // Unlock the pool after accessing
-//         }
+bool local_pool_list::get(int last_node, local_pool_node_ref &node) {
+    if (!present[last_node]) return false;
+    node = local_pool_node_ref(&nodes[last_node], thread, depth, last_node);
+    return true;
+}
 
-//         // Print all collected results as a comma-separated string
-//         for (size_t i = 0; i < results.size(); ++i)
-//         {
-//             std::cout << results[i];
-//             if (i < results.size() - 1)
-//                 std::cout << ",";
-//         }
-//         std::cout << std::endl;
-//     }
-// }
 
-bool local_pool::pop_from_zero_list(int thread_number, path_node &result_node, int stealing_thread)
+void local_pool_thread::initial_state(const std::vector<int> &sequence) {
+    lock.lock();
+    zero_depth = sequence.size();
+    depth = sequence.size();
+    current_path = sequence;
+    current_key.reset();
+    for (size_t i = 0; i < sequence.size(); i++) {
+        pool[i].clear();
+        current_key[sequence[i]] = true;
+    }
+    lock.unlock();
+}
+
+bool local_pool_thread::pop_from_zero_list(path_node &result_node)
 {
-    if (pools[thread_number].size() <= 1)
-    {
-        return false;
-    }
-    locks[thread_number].lock();
+    if (level() <= 1) return false;
 
-    while (pools[thread_number].front().empty() && pools[thread_number].size() > 1)
+    lock.lock();
+
+    while (level() > 1 && pool[zero_depth].empty())
     {
-        pools[thread_number].pop_front();
-        depths[thread_number]++;
+        zero_depth++;
     }
 
-    if (pools[thread_number].size() <= 1)
+    if (level() <= 1)
     {
-        locks[thread_number].unlock();
+        lock.unlock();
         return false;
     }
 
-    result_node = pools[thread_number].front().back();
-    pools[thread_number].front().pop_back();
-    depths[stealing_thread] = depths[thread_number] + 1;
+    pool[zero_depth].back().to_path_node(result_node);
+    pool[zero_depth].pop_back();
 
-    if (pools[thread_number].front().empty())
+    if (pool[zero_depth].empty())
     {
-        pools[thread_number].pop_front();
-        depths[thread_number]++;
+        zero_depth++;
     }
 
-    locks[thread_number].unlock();
+    lock.unlock();
     return true;
 };
 
-bool local_pool::pop_from_active_list(int thread_number, path_node &result_node)
+bool local_pool_thread::pop_from_active_list(local_pool_node_ref &result_node)
 {
-
-    if (pools[thread_number].size() == 0)
+    if (level() <= 0 || pool[depth - 1].empty())
         return false;
 
-    if (pools[thread_number].size() == 0 || pools[thread_number].back().empty())
-    {
-        if (pools[thread_number].size() == 1)
-        {
-            locks[thread_number].unlock();
-        }
-        return false;
-    }
-
-    result_node = pools[thread_number].back().back();
-    pools[thread_number].back().pop_back();
+    result_node = pool[depth - 1].back();
+    pool[depth - 1].pop_back();
 
     return true;
 };
 
-void local_pool::push_list(int thread_number, std::deque<path_node> list)
+void local_pool_thread::start_ready_list()
 {
-    locks[thread_number].lock();
+    pool[depth].clear();
+}
 
-    pools[thread_number].push_back(list);
+void local_pool_thread::push_to_ready_list(int taken_node, int lower_bound, const HistoryReference &history_reference, int cost)
+{
+    pool[depth].push_back(taken_node, local_pool_node{
+        .lower_bound = lower_bound,
+        .history_reference = history_reference,
+        .cost = cost
+    });
+}
 
-    locks[thread_number].unlock();
+void local_pool_thread::push_ready_list()
+{
+    lock.lock();
+    depth++;
+    lock.unlock();
 };
 
-void local_pool::pop_active_list(int thread_number)
+void local_pool_thread::pop_active_list()
 {
-    locks[thread_number].lock();
-    if (pools[thread_number].size() > 0)
-        pools[thread_number].pop_back();
-    locks[thread_number].unlock();
+    lock.lock();
+    if (level() > 0) {
+        depth--;
+    }
+    lock.unlock();
 };
 
-bool local_pool::out_of_work(int thread_number)
+unsigned long long local_pool_thread::node_value()
 {
-    return pools[thread_number].size() == 0;
-};
+    lock.lock();
+    unsigned long long node_value = 0;
+    if (level() > 1 && !pool[zero_depth].empty())
+    {
+        node_value = pool[zero_depth].back().current_node_value();
+    }
+    lock.unlock();
+    return node_value;
+}
+
+bool local_pool_thread::get(int depth, int last_node, local_pool_node_ref &result_node)
+{
+    if (depth > this->depth) return false;
+    return pool[depth - 1].get(last_node, result_node);
+}
+
+void local_pool_thread::activate(int taken_node)
+{
+    current_path.push_back(taken_node);
+    current_key[taken_node] = true;
+}
+
+void local_pool_thread::deactivate()
+{
+    current_key[current_path.back()] = false;
+    current_path.pop_back();
+}
 
 int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigned long long>> &work_remaining, int stolen_from)
 {
@@ -193,13 +188,7 @@ int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigne
     {
         if ((stolen_from & (1 << i)) != 0 || i == thread_number)
             continue;
-        locks[i].lock();
-        unsigned long long node_value = 0;
-        if (pools[i].size() > 1 && pools[i].front().size() != 0)
-        {
-            node_value = pools[i].front().back().current_node_value;
-        }
-        locks[i].unlock();
+        unsigned long long node_value = threads[i].node_value();
         if (node_value > max_value)
         {
             max_value = node_value;
@@ -216,49 +205,11 @@ int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigne
     return max_id;
 }
 
-// int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigned long long>>& work_remaining, int stolen_from){
-//     double max_value = -1;
-//     int max_id = -1;
-//     //std::cout << stolen_from << std::endl;
-//     for(int i = 0; i < thread_count; i++){
-//         if((stolen_from & (1 << i)) != 0 )
-//             continue;
-//         if(i == thread_number)
-//             continue;
-//         if(work_remaining[i] / (depths[i] + 1) > max_value){
-//             max_value = work_remaining[i] / (depths[i] + 1);
-//             max_id = i;
-//             continue;
-//         }
-//         // if(work_remaining[i] == max_value && depths[i] < depths[max_id]){
-//         //     max_value = work_remaining[i];
-//         //     max_id = i;
-//         // }
-//     }
-//     return max_id;
-// }
-
-// int local_pool::choose_victim(int thread_number, std::vector<std::atomic<unsigned long long>>& work_remaining, int a){
-//     int target = rand() % 30;
-//     while(target == thread_number) target = rand() % 30;
-//     return target;
-// }
-
-int local_pool::active_pool_size(int thread_number)
-{ // TODO: this is not strictly necessary
-    return pools[thread_number].back().size();
-}
-
 void local_pool::print()
 {
-    for (size_t i = 0; i < pools.size(); i++)
+    for (size_t i = 0; i < threads.size(); i++)
     {
-        std::cout << pools[i].size() << ", ";
+        std::cout << threads[i].level() << ", ";
     }
     std::cout << std::endl;
-}
-
-void local_pool::set_pool_depth(int thread_id, int depth)
-{
-    depths[thread_id] = depth;
 }

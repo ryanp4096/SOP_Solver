@@ -107,6 +107,9 @@ private:
     HistoryKey subpath_key{
         .bit_vector{}
     };
+
+    // When a thread stop is matched for an earlier prefix in the current path, prune all the way down to that prefix
+    int prune_to_depth{-1};
     
     // sop_state back_up_state;
     // HistoryNode* current_hisnode;
@@ -164,7 +167,7 @@ private:
     void enumerate();
     /* Check the next node before enumeration, and discard it if invalid. Includes its own progress tracking.
         Return - true if the node was discarded, false if its subspace must still be enumerated */
-    bool enumeration_pre_check(path_node &active_node);
+    bool enumeration_pre_check(const local_pool_node_ref &active_node);
     /*called when pruning a node in enumerate*/
     void prune(int source_node, int taken_node, int edge_weight);
 
@@ -175,21 +178,25 @@ private:
         Return - the lower bound computed */
     int dynamic_hungarian(int src, int dst);
 
-    /* Search the history table for previously processed similar paths, and compares the current path to that entry, if found.
-        key - the history key corresponding to the current partial path
-        lowerbound - a return variable, which contains the lower bound found in the history table, if a corresponding entry was found
-        found - a return variable, true if an entry already existed, false otherwise
-        entry - a return variable, a pointer to the history node corresponding to this path
-        cost - the cost of the current path
-        Return - true if this node still needs to be processed, false if it should be pruned */
-    bool history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, PrefixEntry **entry, int source, int destination);
-    /* Add a new entry to the history table.
-        key - the history key corresponding to the partial path this entry represents
-        lower_bound - the lower bound cost of a complete solution beginning with this path
-        entry - a return variable, holds a pointer to the entry created, unless NULL is passed
-        backtracked - if the subtree under this node has already been fully explored */
-    // void push_to_history_table(PrefixKey &key, int lower_bound, HistoryNode **entry, bool backtracked, bool is_best_suffix, int depth, int prefix_cost);
-
+    /**
+     * @brief Searches the history table for previously processed similar paths, and compares the current path to that entry, if found.
+     * @param key The history key of the current partial path
+     * @param cost The cost of the current partial path
+     * @param lowerbound A return variable containing the lower bound, either calculated or updated from a previous history entry
+     * @param found A return variable containing true if an entry already existed and false otherwise
+     * @param entry A return variable containing a pointer to the history node corresponding to this path
+     * @param source (For hungarian) The second to last node in the current path
+     * @param destination (For hungarian) The last node in the current path
+     * @return true if node can be pruned, false if node cannot be pruned
+     */
+    bool history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, HistoryReference &history_reference, int source, int destination);
+    
+    /**
+     * @brief Searches the subpath history table for all new subpaths at this node and prunes if any subpath is inferior to a previously explored subpath.
+     * @param path The current path in branch and bound
+     * @return true if node can be pruned, false if node cannot be pruned
+     */
+    bool subpath_history_utilization(const std::vector<int> &path);
 
     /* returns true on success */
     bool workload_request();
@@ -211,7 +218,7 @@ private:
     void print_state(sop_state &state);
 
     // For checking, if any thread requested another thread to stop
-    bool check_stop_request(HistoryKey history_key, std::vector<int> sequence, bool *prefixPathMatched);
+    bool check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched);
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
