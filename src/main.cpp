@@ -17,22 +17,20 @@ int main(int argc, char *argv[])
         cout << "Usage: ./sop_solver <instance_path> <thread_count> <config_path>" << endl;
         exit(1);
     }
+    setpriority(PRIO_PROCESS, 0, -20);
+
     string instance_path = argv[1];
     int thread_count = atoi(argv[2]);
     string config_path = argv[3];
 
-    solver s;
-    setpriority(PRIO_PROCESS, 0, -20);
+    solver s(instance_path, thread_count, config_path);
 
     if (argc > 4) {
         string trace_path = argv[4];
         s.enable_trace(trace_path);
     }
 
-    Config config = parse_config(config_path);
-    s.assign_parameter(config);
-
-    s.solve(instance_path, thread_count);
+    s.solve();
 
     return 0;
 }

@@ -35,6 +35,7 @@
 #include "trace.hpp"
 #include "config.hpp"
 #include "memory.hpp"
+#include "statistics/stats.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 
@@ -95,50 +96,16 @@ struct sop_state
 class solver
 {
 private:
-    int thread_id = -1; // a number 0 through (thread_total - 1) identifying this thread
+    string instance_path;
+    int thread_count;
+    string config_path;
+    Config config;
+    bool trace_enabled{false};
+    string trace_path;
+    string trace_path_ext;
 
-    int instance_size = -1;  // number of nodes in the graph, including virtual starting and ending nodes ("real" nodes would be instance_size - 2)
     sop_state problem_state; // this thread's current state
     
-    // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
-    // Safe because each thread gets its own solver instance
-    std::deque<path_node> ready_list;
-    // Reuse subpath bit vector and subpath key to avoid repeated allocations
-    HistoryKey subpath_key{
-        .bit_vector{}
-    };
-
-    // When a thread stop is matched for an earlier prefix in the current path, prune all the way down to that prefix
-    int prune_to_depth{-1};
-    
-    // sop_state back_up_state;
-    // HistoryNode* current_hisnode;
-
-    // deque<instrct_node> wrksteal_pool;
-    // deque<instrct_node> *local_pool = NULL;
-    // std::vector<recur_state> recur_stack;
-
-    // Active_Allocator Allocator;
-    // Active_Path cur_active_tree;
-    // bool abandon_work = false;
-    // bool abandon_share = false;
-    // bool grabbed = false;
-    // int restart_group_id = -1;
-    // int mg_id = -1;
-    // bool speed_search = false;
-    // int lb_curlv = INT_MAX;
-
-    // Restart
-    //  int concentrate_lv = 0;
-
-    // Thread Stopping
-    //  int stop_depth = -1;
-    //  int last_node = -1;
-    //  bool stop_init = false; //INVESTIGATE; might be whether this thread has ever been stopped before
-
-    // Trace File
-    Trace trace;
-
     /* Build graph based on .sop input file specified in filename. */
     void retrieve_input();
     /* Transforms dependency and Hungarian graphs, adding redundant edges from grandparents, great grandparents, etc., and initializes in_degree. */
@@ -159,6 +126,39 @@ private:
     /* Returns true if any sop_state in the container has a depth different than any other, false otherwise. Used for initial splitting in solve_parallel. */
     bool split_level_check(deque<sop_state> *solver_container);
 
+public:
+    solver(const string &instance_path, int thread_count, const string &config_path);
+    /* Takes config information and defines all runtime parameters from those strings. */
+    void assign_parameter();
+    /* Enable writing a trace file of the algorithm to the given path. */
+    void enable_trace(string path);
+    /* Primary function that initializes and begins the solver. */
+    void solve();
+};
+
+class solver_thread {
+private:
+    int thread_id; // a number 0 through (thread_total - 1) identifying this thread
+    sop_state problem_state; // this thread's current state
+
+    // Performance optimization: Reuse ready_list to avoid repeated allocations in enumerate()
+    // Safe because each thread gets its own solver instance
+    std::deque<path_node> ready_list{};
+    // Reuse subpath bit vector and subpath key to avoid repeated allocations
+    HistoryKey subpath_key{
+        .bit_vector{}
+    };
+
+    // When a thread stop is matched for an earlier prefix in the current path, prune all the way down to that prefix
+    int prune_to_depth{-1};
+
+    stats_thread stats;
+
+    // Trace File
+    Trace trace;
+public:
+    solver_thread(const solver &parent, int thread_id, unsigned instance_size) : thread_id{thread_id}, stats{instance_size} {}
+private:
     /* To process the best tour path provided by LKH */
     void processBestTour();
     /* Starts enumeration */
@@ -222,13 +222,10 @@ private:
 
     // for generating history_key and cost
     bool check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost);
-public:
-    /* Takes config information and defines all runtime parameters from those strings. */
-    void assign_parameter(Config config);
-    /* Enable writing a trace file of the algorithm to the given path. */
-    void enable_trace(string path);
-    /* Primary function that initializes and begins the solver. */
-    void solve(string f_name, int thread_num);
+
+    void enable_trace(const string &trace_path, const string &trace_path_ext);
+
+    friend class solver;
 };
 
 /* These 64 byte structs are necessary for some shared resources in order to reduce cache coherency problems.

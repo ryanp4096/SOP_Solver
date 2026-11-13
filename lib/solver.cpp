@@ -6,35 +6,24 @@ extern "C"
 }
 
 #define TABLE_SIZE 541065431 // number of buckets in the history table
-std::atomic<bool> isProcessingBestTour(false);
 
-static bool trace_enabled = false;
-static string trace_path;
-static string trace_path_ext;
-
-static cpu_timer ctimer;
+static vector<solver_thread> solvers{};
 
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
-static string filename;      // name of the sop input file
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
-// static bool limit_insertion = false;
 static int numberOfTimesLKHPathProcessed = 0;
+static atomic<unsigned long long> not_best_suffix_count(0);
 static atomic<int> numberOfTimesBestSuffixEntryUpdated(0);
 static atomic<int> numberOfTimesBetterThanLKH(0);
-// static int numberOfTimesBestSuffixEntryAdded = 0;
-int *globalBestTour = nullptr;
-int instance_size_global = 0;   // size of the instance, used in copying the best tour within LKH
+int instance_size;
 // from config file
 static int t_limit = 0;          // time limit, in seconds
 static int global_pool_size = 0; // Minimum size of the global pool at before enumeration begins
-// static int local_depth = 0;                     //Minimum size to maintain in the local pool
 static float inhis_mem_limit = -1; // 0-1, the percentage of memory usage beyond which new entries shouldn't be added to the history table
 static float mem_limit = -1;       // 0-1, the percentage of memory usage beyond which we will start blocking new entries into the table
 static int number_of_groups = 1;
 static int bucket_size = 0;
-static bool is_all_table_blocked = false;
-// static unsigned int inhis_depth = -1;           //after inhis_mem_limit exceeded, will still add an entry if the current depth is less than inhis_depth
 // int exploitation_per;                        //percent of threads that should be devoted to searching already promising subspaces in thread restart, while 1 - exploitation_per percent are devoted to exploring new subspaces
 // group_sample_time                            //period on which to schedule thread restart
 // static int tgroup_ratio = 0;                 //
@@ -55,9 +44,7 @@ static bool lkh_subpaths_only = false;
 static int expected_lkh_cost = 0;
 
 // derived attributes
-static int max_edge_weight = 0; // highest weight of any edge in the cost graph
 static float pre_density = 0;   // number of edges in precedence graph (including derived edges) / the maximum possible
-// static int local_pool_size = 0;                 //determined based on presidence density
 /////////////////////////////////////////
 
 ///////////Shared Resources//////////////
@@ -65,7 +52,6 @@ static vector<vector<edge>> cost_graph;      // n by n matrix with the cost from
 static vector<vector<int>> dependency_graph; // list for each node i of every node j that is dependent on it
 static vector<vector<edge>> in_degree;       // list for each node i of every node j that it is dependent on (in edge format) i.e. what nodes must precede it
 static vector<vector<edge>> hungarian_graph; // graph in the format that the Hungarian algorithm requires
-static vector<vector<int>> outgoing_graph;
 
 static sop_state default_state; // state of a solver before the first node was taken
 // static vector<Hungarian> initial_hungarian_state;   //for each thread, the Hungarian solver as it began
@@ -74,25 +60,11 @@ static Hasher hasher;
 static vector<path_node> global_pool;                     // a global pool of nodes that haven't yet been processed by any thread, only ever take from the back
 static local_pool *local_pools;                           // each thread's local pool, with the internal tools to manage them, only ever take from the back
 static vector<atomic<unsigned long long>> work_remaining; // used for work stealing, hold an estimate of how much work is left for a thread to do
-static vector<atomic<float>> time_taken;
+static stats_global* global_stats{};
 
-float last_updated_at;
 ///////////Synchronization Variables/////
-// pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;   //lock for any updates to best_solution and its cost
 static mutex best_solution_lock;
 static mutex global_pool_lock; // lock for getting nodes from the global pool
-// static mutex Split_lock;
-// static mutex asssign_mutex;
-// static mutex thread_load_mutex;
-// static condition_variable Idel;
-// static condition_variable Thread_Stop_Check;
-// static condition_variable Resume_State;
-// static vector<int> selected_orgin;
-// static mutex Select_Mutex;
-// static mutex Select_SharedMutex;
-// static mutex Resume_Lock;
-// static mutex launch_lck;
-// pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;   //lock for any updates to best_solution and its cost
 
 static mutex diagnostics_lock;
 static int diagonstics_period = 1800;
@@ -100,58 +72,22 @@ static float diagonstics_targetTime = 0;
 static atomic<bool> time_out(false);  // whether the instance has timed out
 static std::atomic<bool> parallel_setup_complete(false); // whether B&B solver_parallel has finished setting up structures
 static atomic<int> active_threads(0); // the number of threads still working
-// static atomic<int> selected_thread (-1);
-// static atomic<int> restart_cnt (0);
-// static atomic<int> total_restarts (0);
-// static atomic<unsigned> idle_counter (0);
-// static atomic<size_t> resload_cnt (0);
-// static atomic<bool> limit_insert (false);
-// static atomic<bool> check_status_safe (true);
-// static atomic<bool> resume_success (true);
-// static atomic<bool> resume_check (false);
-// static atomic<bool> exploit_init (false);
 
 static vector<int> best_solution; // the lowest cost solution found so far in any thread
 int best_cost = INT_MAX;          // the cost of best_solution, this is an extern (global) variable shared by LKH
 
 static timer main_timer; // when solve_parallel started (before processing begins, but after all the basic setup, file parsing, etc.)
-static timer lkh_timer;  // time to track when LKH is updating the best solution
-// std::chrono::time_point<std::chrono::system_clock> time_point;
 
 /////////////////////////////////////////
 
 ///////////Thread Stopping Variables/////
-static deque<request_packet> request_buffer; //
-static mutex buffer_lock;                    // lock for accessing the request_buffer
-// static vector<thread_request> thread_requests;
 static vector<thread_request> thread_requests(32);
-
-// static mutex pause_lock;                       //
-// static mutex ptselct_lock;                     //
-static atomic<bool> stop_sig(false); // if any threads are currently being requested to stop
-// static vector<long long int> history_table_pruning_success = vector<long long int>(380); // uncomment to track the pruning at each depth and set the size of the instance
-
-static atomic<int> thread_stop_requested(0);
-static atomic<int> thread_stop_observed(0);
-static atomic<int> thread_stop_check(0);
-static atomic<int> thread_stopped_successfully(0); // how many threads should stop
-static atomic<int> thread_stop_schedule(0);
-/////////////////////////////////////////
-
-///////////Work Stealing Variables///////
-//
-/////////////////////////////////////////
-
-///////////Thread Restart Variables//////
-// MADE REDUNDANT DO NOT IMPLEMENT
-/////////////////////////////////////////
 
 ///////////LKH Variables/////////////////
 thread LKH_thread;
 int *bestBB_tour = NULL;  // an array of the best solution not found by LKH, but 1-indexed
 bool BB_SolFound = false; // whether the current best solution was found by B&B, rather than LKH
 bool BB_Complete = false;
-bool local_searchinit = true;
 bool initial_LKHRun = true;
 
 // below variables is for sharing LKH best tour
@@ -161,37 +97,10 @@ float last_updated_time_by_LKH = 0;
 int lkh_end_time = 100; // updated with the config file value
 // int lkh_stable_entry_duration = 10; // time in seconds to wait after last best cost improvement before processing LKH entry - updated with config file value
 
-// bool isBestTourProcessed = false;                      // Flag to track if the BestTour has been handled
-
 pthread_mutex_t Sol_lock = PTHREAD_MUTEX_INITIALIZER;
 /////////////////////////////////////////
 
 ///////////Diagnostic Variables//////////
-static vector<unsigned long long> enumerated_nodes; // total number of nodes processed by each thread
-static vector<vector<unsigned long long>> enumerated_nodes_by_depth;
-static vector<unsigned long long> pruned_nodes;
-static vector<vector<unsigned long long>> pruned_nodes_by_depth;
-
-#include "subpath_diagnostics.hpp"
-static subpath_data *subpath_stats;
-
-static atomic<unsigned long long> not_best_suffix_count(0);
-static atomic<int> times_work_stolen;
-static atomic<int> steal_misses;
-static vector<atomic<int>> steal_attempts = vector<atomic<int>>(32);
-static vector<atomic<int>> steal_success = vector<atomic<int>>(32);
-static atomic<double> time_workstealing;
-static vector<double> steal_times;
-static mutex steal_times_lock;
-// static vector<unsigned long long> estimated_trimmed_percent;  //estimated percentage of entire tree pruned or fully enumerated in each thread, stored as an integer out of ULLONG_MAX
-// TODO: change estimated_trimmed_percent to use unsigned_long_64 (and ULONG_MAX) instead of unsigned long long (and ULLONG_MAX)
-// static vector<int_64> num_resume;
-// static vector<int_64> num_stop;
-// static vector<double> lp_time;
-// static vector<double> steal_wait;
-// static vector<vector<double>> proc_time;
-// static vector<int> steal_cnt;
-// something to track history entry usage
 static vector<boost::dynamic_bitset<>> lkh_path_by_depth;
 static vector<int> lkh_last_node_by_depth;
 static vector<int> lkh_cost_by_depth;
@@ -216,11 +125,11 @@ static double gp_remaining; // variable to store the number of remaining work fr
 bool stop_lkh_flag = false;
 bool lkh_entry_processed = false;
 std::atomic<bool> is_first_lkh_thread_use{true};
-void lkh()
+void lkh(string &instance_path)
 {
     while (!BB_Complete && !stop_lkh_flag)
     {
-        LKH(&filename[0], initial_LKHRun);
+        LKH(&instance_path[0], initial_LKHRun);
         if (initial_LKHRun)
         {
             initial_LKHRun = false;
@@ -261,7 +170,7 @@ MatchInfo check_match(sop_state& problem_state) {
     int last_node = problem_state.history_key.last_node;
     // int cost = problem_state.current_cost;
 
-    if (depth >= instance_size_global)
+    if (depth >= instance_size)
         return {
             .available = true
         };
@@ -384,6 +293,12 @@ void print_diagnostics()
 /* ---------------------       END        -------------------------*/
 /* --------------------- Static Functions -------------------------*/
 
+solver::solver(const string &instance_path, int thread_count, const string &config_path)
+    : instance_path{instance_path}, thread_count{thread_count}, config_path{config_path}
+{
+    assign_parameter();
+}
+
 void solver::enable_trace(string path)
 {
     #ifdef ENABLE_TRACE
@@ -391,6 +306,7 @@ void solver::enable_trace(string path)
     size_t ext_index = path.find_last_of('.');
     if (ext_index == string::npos || path.length() - ext_index > 5) {
         trace_path = path;
+        trace_path_ext = "";
     } else {
         trace_path = path.substr(0, ext_index);
         trace_path_ext = path.substr(ext_index);
@@ -400,8 +316,10 @@ void solver::enable_trace(string path)
     #endif
 }
 
-void solver::assign_parameter(Config config)
+void solver::assign_parameter()
 {
+    config = parse_config(config_path);
+
     t_limit = config.time_limit;
     std::cout << "Time limit = " << t_limit << std::endl;
 
@@ -447,7 +365,6 @@ void solver::assign_parameter(Config config)
     else
     {
         mem_limit = inhis_mem_limit; // if the bucket size is one, the mem limit would be same as config file
-        is_all_table_blocked = true; // by setting this to true, we are saying that all the buckets are blocked except first bucket
     }
     std::cout << "Blocking mem limit = " << mem_limit << std::endl;
 
@@ -499,21 +416,20 @@ void print_workdone()
     long double percentage_done = (total_global_work_done / gp_const) * 100;
     std::cout << "Percentage of work done: " << percentage_done << "%" << std::endl;
 }
-void solver::solve(string f_name, int thread_num)
+void solver::solve()
 {
-    if (thread_num < 1)
+    if (thread_count < 1)
     {
         std::cerr << "Invalid Thread Number Input" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     if (enable_lkh)
-        thread_total = thread_num - 1;
+        thread_total = thread_count - 1;
     else
-        thread_total = thread_num;
+        thread_total = thread_count;
     if (global_pool_size < thread_total)
         global_pool_size = thread_total;
-    filename = f_name;
     retrieve_input();
     transitive_redundancy();
 
@@ -534,7 +450,6 @@ void solver::solve(string f_name, int thread_num)
     temp_solution.push_back(0);
     best_solution = nearest_neighbor(&temp_solution);
     std::cout << "Initial Best Solution Is " << best_cost << std::endl;
-    instance_size_global = instance_size;
     // necessary for LKH
     //  bestBB_tour = new int[instance_size];
     //  for (int i = 0; i < instance_size; i++) bestBB_tour[i] = best_solution[i] + 1;
@@ -543,7 +458,7 @@ void solver::solve(string f_name, int thread_num)
     //  promise_Tlimit = (thread_total * exploitation_per) / tgroup_ratio;
     //  std::cout << "Maximum exploitation group during thread restart is set to " << promise_Tlimit << std::endl;
 
-    max_edge_weight = get_maxedgeweight();
+    int max_edge_weight = get_maxedgeweight();
     problem_state.hungarian_solver = Hungarian(instance_size, max_edge_weight + 1, get_cost_matrix(max_edge_weight + 1));
     problem_state.hungarian_solver.start();
     problem_state.depCnt = vector<int>(instance_size, 0);
@@ -573,20 +488,19 @@ void solver::solve(string f_name, int thread_num)
     }
 
     default_state = problem_state; // a copy of problem_state, since structs are passed by value
-    std::cout << "Instance size is " << instance_size - 2 << std::endl;
+    std::cout << "Instance size is " << instance_size << std::endl;
 
     // thread_load = new load_stats [thread_total];
     local_pools = new local_pool(thread_total + 1, instance_size);
 
     HistoryTableMemoryOptions options = {
-        .thread_count = static_cast<unsigned>(thread_num)
+        .thread_count = static_cast<unsigned>(thread_count)
     };
     history_table = HistoryTable(options);
 
     hasher = Hasher(static_cast<size_t>(instance_size));
 
-    ctimer.initialize(thread_total + 1);
-    subpath_stats = new subpath_data(thread_total + 1, instance_size);
+    global_stats = new stats_global(thread_total + 1, instance_size);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
     // {
@@ -608,17 +522,24 @@ void solver::solve(string f_name, int thread_num)
     // for (int i = 0; i < thread_total; i++) initial_hungarian_state.push_back(default_state.hungarian_solver);
     // steal_cnt = vector<int>(thread_total,0);
     // enumerated_nodes = vector<unsigned_long_64>(thread_total);
-    // estimated_trimmed_percent = vector<unsigned long long>(thread_total,0);
     lkh_best_tour = new int[instance_size + 1]; // + 1 because LKH tours are 1-indexed
     bestBB_tour = new int[instance_size];       // + 1
     for (int i = 0; i < instance_size; i++)
         bestBB_tour[i] = best_solution[i] + 1;
 
+    solvers.reserve(thread_total + 1);
+    for (int i = 0; i < thread_total + 1; i++) {
+        solvers.push_back(solver_thread(*this, i, instance_size));
+        global_stats->register_thread(i, solvers.back().stats);
+        if (trace_enabled)
+            solvers.back().enable_trace(trace_path, trace_path_ext);
+    }
+
     if (enable_lkh) {
         std::cout << "Launching LKH thread before BB parallel setup\n";
         LKH_thread = std::thread([&](){
             // Run LKH until optimal or timeout
-            lkh();
+            lkh(instance_path);
 
             // As soon as LKH is done, immediately start enumerate on a new subproblem
             // Must wait until solve_parallel completes BB structures (work_remaining, global_pool, local_pools)
@@ -628,11 +549,8 @@ void solver::solve(string f_name, int thread_num)
 
             if (!BB_Complete)
             {
-                int lkh_thread_index = thread_total; // Use the next available index
-                solver lkh_solver;
+                solver_thread &lkh_solver = solvers[thread_total];
                 lkh_solver.problem_state = default_state;
-                lkh_solver.thread_id = lkh_thread_index;
-                lkh_solver.instance_size = instance_size;
                 lkh_solver.subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
 
                 if (/*enable_process_lkh_best_tour &&*/ !BB_SolFound && best_cost_temp != INT_MAX && best_cost_temp == best_cost)
@@ -661,29 +579,6 @@ void solver::solve(string f_name, int thread_num)
     if (enable_lkh)
         if (LKH_thread.joinable())
             LKH_thread.join();
-    
-    // DIAGNOSTIC : Enumerated Nodes
-    unsigned long long enumerated_nodes_sum = 0;
-    unsigned long long pruned_nodes_sum = 0;
-    vector<unsigned long long> enumerated_nodes_sum_by_depth(instance_size + 1);
-    vector<unsigned long long> pruned_nodes_sum_by_depth(instance_size + 1);
-    for (size_t i = 0; i < enumerated_nodes.size(); i++)
-    {
-        enumerated_nodes_sum += enumerated_nodes[i];
-        pruned_nodes_sum += pruned_nodes[i];
-        for (int d = 0; d < instance_size + 1; d++) {
-            enumerated_nodes_sum_by_depth[d] += enumerated_nodes_by_depth[i][d];
-            pruned_nodes_sum_by_depth[d] += pruned_nodes_by_depth[i][d];
-        }
-        std::cout << "enumerated_nodes[" << i << "] = " << enumerated_nodes[i] << ", pruned_nodes[" << i << "] = " << pruned_nodes[i] << std::endl;
-    }
-    std::cout << "Total enumerated nodes: " << enumerated_nodes_sum << endl;
-    std::cout << "Total pruned nodes: " << pruned_nodes_sum << endl;
-    std::cout << "Enumerated - pruned: " << enumerated_nodes_sum - pruned_nodes_sum << endl;
-    std::cout << "Percent pruned: " << (static_cast<long double>(pruned_nodes_sum)) / enumerated_nodes_sum * 100 << "%" << endl;
-    for (int d = 0; d < instance_size + 1; d++) {
-        std::cout << "[Depth " << d << "] enumerated: " << enumerated_nodes_sum_by_depth[d] << ", pruned: " << pruned_nodes_sum_by_depth[d] << ", enumerated lkh match: " << (lkh_processed_by_depth ? nodes_before_match_by_depth[d].load() : 0) << endl;
-    }
     
     std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
     if (enable_manual_match_check) {
@@ -719,7 +614,19 @@ void solver::solve(string f_name, int thread_num)
         std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
     }
 
-    subpath_stats->print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->nodes.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->prefixes.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->subpaths.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->thread_stopping.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->work_stealing.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->cpu_timer.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
 
     std::cout << "Best Tour: ";
     for (int x : best_solution) {
@@ -728,43 +635,23 @@ void solver::solve(string f_name, int thread_num)
     std::cout << endl;
 
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    std::cout << "------------------------" << thread_num << " thread"
+    std::cout << "------------------------" << thread_count << " thread"
               << "------------------------------" << std::endl;
-    std::cout << "thread stop requested: " << thread_stop_requested << "\n";
-    std::cout << "thread stop observed: " << thread_stop_observed << "\n";
-    std::cout << "thread stop check: " << thread_stop_check << "\n";
-    std::cout << "thread stopped successfully: " << thread_stopped_successfully << "\n";
-    std::cout << "thread stop schedule: " << thread_stop_schedule << "\n";
 
     std::cout << "Number of times LKH path was processed: " << numberOfTimesLKHPathProcessed << endl;
     // std::cout << "Number of times Best suffix entry added: " << numberOfTimesBestSuffixEntryAdded << endl;
     std::cout << "Number of times Best suffix entry updated: " << numberOfTimesBestSuffixEntryUpdated.load() << endl;
     std::cout << "Number of times BB found prefix cost better than LKH: " << numberOfTimesBetterThanLKH.load() << endl;
 
-    for (size_t i = 0; i < steal_success.size(); i++)
-        std::cout << steal_success[i] << ", ";
-    std::cout << endl;
-    for (size_t i = 0; i < steal_success.size(); i++)
-        std::cout << steal_attempts[i] << ", ";
-    std::cout << endl;
-    std::cout << "total work stolen: " << times_work_stolen << endl;
-    std::cout << "steal misses: " << steal_misses << endl;
-
-    double percent_time_active = (((double)total_time / 1000000) * 32 - time_workstealing) / ((double)total_time / 1000000 * 32);
+    double percent_time_active = (((double)total_time / 1000000) * 32 - global_stats->work_stealing.total_time_stealing()) / ((double)total_time / 1000000 * 32);
     std::cout << "active time: " << percent_time_active << endl;
 
     std::cout << "best_cost: " << best_cost << "," << setprecision(4) << total_time / (float)(1000000) << std::endl
               << std::endl;
 
-    for (size_t i = 0; i < steal_times.size(); i++)
-    {
-        std::cout << steal_times[i] << endl;
-    }
     print_workdone();
 
     cout << "[Memory] Maximum memory used: " << getPeakMemoryUsage() / 1048576 << " MB" << endl;
-
-    ctimer.print_results();
 
     // cout << "[Memory] Memory Info Lookups: " << getMemoryLookupCount() << endl;
     // to count the number of entries at different level in history table and their references
@@ -844,7 +731,6 @@ void solver::solve_parallel()
 {
     main_timer.restart();
 
-    vector<solver> solvers(thread_total + 1);
     deque<sop_state> *solver_container;
     vector<thread> Thread_manager(thread_total + 1);
 
@@ -1029,7 +915,6 @@ void solver::solve_parallel()
                 // solvers[thread_cnt].problem_state.current_node_value = problem.current_node_value; //for progress estimation
 
                 solvers[thread_cnt].thread_id = thread_cnt;
-                solvers[thread_cnt].instance_size = instance_size;
                 // solvers[thread_cnt].lb_curlv = problem.lower_bound;
                 //  solvers[thread_cnt].cur_active_tree = Active_Path(solvers[thread_cnt].problem_state.cur_solution.size());
                 //  solvers[thread_cnt].cur_active_tree.set_threadID(thread_cnt, thread_total);
@@ -1055,14 +940,6 @@ void solver::solve_parallel()
     }
 
     work_remaining = std::vector<std::atomic<unsigned long long>>(thread_cnt + 1);
-    enumerated_nodes = std::vector<unsigned long long>(thread_cnt + 1);
-    pruned_nodes = std::vector<unsigned long long>(thread_cnt + 1);
-    enumerated_nodes_by_depth = vector<vector<unsigned long long>>(thread_cnt + 1);
-    pruned_nodes_by_depth = vector<vector<unsigned long long>>(thread_cnt + 1);
-    for (int i = 0; i < thread_cnt + 1; i++) {
-        enumerated_nodes_by_depth[i] = vector<unsigned long long>(instance_size + 1);
-        pruned_nodes_by_depth[i] = vector<unsigned long long>(instance_size + 1);
-    }
     match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     no_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
     subpath_match_actions = vector<vector<unsigned long long>>(thread_cnt + 1);
@@ -1077,8 +954,6 @@ void solver::solve_parallel()
     for (int i = 0; i < thread_cnt + 1; ++i)
     {
         work_remaining[i] = ULLONG_MAX;
-        enumerated_nodes[i] = 0;
-        pruned_nodes[i] = 0;
     }
     work_remaining[thread_cnt] = 0;
 
@@ -1086,7 +961,7 @@ void solver::solve_parallel()
     for (int i = 0; i < thread_total; ++i)
     {
         std::cout << "Starting thread " << i << "\n";
-        Thread_manager[i] = thread(&solver::start_thread, move(solvers[i]));
+        Thread_manager[i] = thread(&solver_thread::start_thread, std::ref(solvers[i]));
         active_threads++;
     }
 
@@ -1178,14 +1053,14 @@ void rotateTourToStartFromNode0(int *tour, int size)
 }
 void checkSubpath(int *tour, HistoryKey &key, int expected_cost, int expected_depth, int expected_shift) {
     if (!enable_manual_match_check) return;
-    int node_to_order[instance_size_global];
-    for (int i = 0; i < instance_size_global; i++) {
+    int node_to_order[instance_size];
+    for (int i = 0; i < instance_size; i++) {
         node_to_order[tour[i]] = i;
     }
-    boost::dynamic_bitset<> order_bitset(instance_size_global, false);
+    boost::dynamic_bitset<> order_bitset(instance_size, false);
     int highest_index = -1;
     int last_node = -1;
-    for (int i = 0; i < instance_size_global; i++) {
+    for (int i = 0; i < instance_size; i++) {
         if (key.bit_vector[i]) {
             int order = node_to_order[i];
             // cout << "N" << i << "/O" << order << " ";
@@ -1208,7 +1083,7 @@ void checkSubpath(int *tour, HistoryKey &key, int expected_cost, int expected_de
     int stage = 0;
     int shift = -1;
     int length = 1;
-    for (int i = 1; i < instance_size_global; i++) {
+    for (int i = 1; i < instance_size; i++) {
         if (stage == 0 && order_bitset[i]) {
             shift = i - 1;
             stage = 1;
@@ -1221,7 +1096,7 @@ void checkSubpath(int *tour, HistoryKey &key, int expected_cost, int expected_de
         }
     }
     if (stage == 1) {
-        length = instance_size_global - shift;
+        length = instance_size - shift;
     }
     // cout << "[checkSubpath] Found subpath depth " << length << " shift " << shift << endl;
     if (length != expected_depth || shift != expected_shift) {
@@ -1233,7 +1108,7 @@ void checkSubpath(int *tour, HistoryKey &key, int expected_cost, int expected_de
 
     int cost_check = 0;
     int last = -1;
-    for (int i = 0; i < instance_size_global; i++) {
+    for (int i = 0; i < instance_size; i++) {
         if (order_bitset[i]) {
             int node = tour[i];
             if (last != -1) {
@@ -1261,7 +1136,7 @@ struct processBestTourStats {
     int error = 0; // error ocurred
 };
 
-void solver::processBestTour()
+void solver_thread::processBestTour()
 {
     if (!enable_process_lkh_best_tour && !enable_manual_match_check) return;
     std::cout << "[processBestTour] Initiating local best tour and Thread ID : " << thread_id << std::endl;
@@ -1315,7 +1190,7 @@ void solver::processBestTour()
 
     int safety_cost_check_total = 0;
     // Compute total cost using prefix sum
-    for (int i = 0; i < instance_size_global - 1; i++)
+    for (int i = 0; i < instance_size - 1; i++)
     {
         // std::cout << "total cost" << total_cost << std::endl;
         int src = localBestTour[i];
@@ -1323,7 +1198,6 @@ void solver::processBestTour()
         // std::cout << "cost graph value at src " << src << " and dst " << dst << "  " << cost_graph[src][dst].weight << std::endl;
         if (cost_graph[src][dst].weight < 0) {
             cout << "best tour index " << i << " had negative cost between node " << src << " and " << dst << endl;
-            isProcessingBestTour.store(false);
             return;
         }
         safety_cost_check_total += cost_graph[src][dst].weight;
@@ -1333,7 +1207,6 @@ void solver::processBestTour()
     if (safety_cost_check_total != total_cost)
     {
         std::cout << "Mismatch in total cost calculation! Computed: " << safety_cost_check_total << ", Expected: " << total_cost << std::endl;
-        isProcessingBestTour.store(false);
         return;
     }
 
@@ -1637,25 +1510,26 @@ void solver::processBestTour()
 
 }
 
-void solver::start_thread()
+void solver_thread::start_thread()
 {
     subpath_key.bit_vector = boost::dynamic_bitset<>(instance_size, false);
     local_pools->thread(thread_id).initial_state(problem_state.current_path);
-    if (trace_enabled) {
-        string path;
-        if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
-            path = trace_path + trace_path_ext;
-        else
-            path = trace_path + to_string(thread_id) + trace_path_ext;
-        
-        trace.open(path, instance_size, trace_detail_level, thread_id);
-        trace.write_header();
-        trace_initial_state(trace, &problem_state);
-    }
+    trace_initial_state(trace, &problem_state);
     enumerate();
 }
 
-void solver::enumerate()
+void solver_thread::enable_trace(const string &trace_path, const string &trace_path_ext) {
+    string path;
+    if (thread_total == 1 && !(enable_lkh && enable_reuse_lkh_thread))
+        path = trace_path + trace_path_ext;
+    else
+        path = trace_path + to_string(thread_id) + trace_path_ext;
+    
+    trace.open(path, instance_size, trace_detail_level, thread_id);
+    trace.write_header();
+}
+
+void solver_thread::enumerate()
 {
     // wait for lkh to finish before enumerating. for debug only
     if (enable_finish_lkh_before_bb && !lkh_entry_processed)
@@ -1720,17 +1594,16 @@ void solver::enumerate()
             stop_lkh_flag = true;
         }
         // PROGRESS variables
-        int ready_node_count = 0;
-        int pruned_count = 0;
+        int enumerated_count = 0;
+        int ready_count = 0;
 
         local_pools->thread(thread_id).start_ready_list();
-        // bool limit_insertion = false;
         for (int taken_node = 0; taken_node < instance_size; taken_node++)
         {
             if (!problem_state.depCnt[taken_node] && !problem_state.taken_arr[taken_node])
             { // only consider nodes that haven't already been taken, and who have no remaining dependencies
-                ctimer.start(cpu_timer::NODE_SETUP, thread_id);
-                ready_node_count++;
+                stats.cpu_timer.enumerate_node_start.start_timer();
+                enumerated_count++;
                 trace.write_node(taken_node);
 
                 // triming
@@ -1755,15 +1628,16 @@ void solver::enumerate()
                 if (problem_state.current_cost >= best_cost)
                 { // backtracking
                     trace.write(TRACE_PRUNE_COST, 1);
-                    pruned_count++;
                     log_node(thread_id, problem_state, match_info, PRUNE_BEST_COST);
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                    stats.cpu_timer.enumerate_node_start.stop_timer();
+                    stats.nodes.prune_cost++;
                     continue;
                 }
 
                 if (problem_state.current_path.size() == (size_t)instance_size)
                 { // if you've reached a leaf node (complete solution)
+                    stats.nodes.prune_leaf++;
                     trace.write(TRACE_PRUNE_LEAF, 1);
                     if (problem_state.current_cost < best_cost)
                     {
@@ -1797,68 +1671,65 @@ void solver::enumerate()
                         best_solution_lock.unlock();
                     }
 
-                    pruned_count++;
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                    stats.cpu_timer.enumerate_node_start.stop_timer();
                     continue;
                 }
-                ctimer.stop(cpu_timer::NODE_SETUP, thread_id);
+                stats.cpu_timer.enumerate_node_start.stop_timer();
 
-                ctimer.start(cpu_timer::HISTORY_UTILIZATION, thread_id);
                 HistoryReference history_reference{};
+                stats.cpu_timer.enumerate_prefix_history.start_timer();
                 bool pruned = history_utilization(problem_state.history_key, problem_state.current_cost, &lower_bound, &taken, history_reference, source_node, taken_node);
+                stats.cpu_timer.enumerate_prefix_history.stop_timer();
                 if (pruned) {
-                    pruned_count++;
                     log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
                     prune(source_node, taken_node, edge_weight);
-                    ctimer.stop(cpu_timer::HISTORY_UTILIZATION, thread_id);
                     continue;
                 }
-                ctimer.stop(cpu_timer::HISTORY_UTILIZATION, thread_id);
 
 
                 /* Check if any new subpaths at this node are inferior to a matching subpath in the subpath history table. */
                 if (enable_subpath_history_table && (!lkh_subpaths_only || lkh_entry_processed)) {
-                    ctimer.start(cpu_timer::SUBPATH_HISTORY, thread_id);
+                    stats.cpu_timer.enumerate_subpath_history.start_timer();
                     bool pruned_by_subpaths = subpath_history_utilization(problem_state.current_path);
-                    ctimer.stop(cpu_timer::SUBPATH_HISTORY, thread_id);
+                    stats.cpu_timer.enumerate_subpath_history.stop_timer();
 
-                    subpath_stats->threads[thread_id].nodes++;
                     if (pruned_by_subpaths) {
-                        subpath_stats->threads[thread_id].nodes_pruned++;
-                        pruned_count++;
                         log_node(thread_id, problem_state, match_info, PRUNE_SUBPATH_HISTORY);
                         prune(source_node, taken_node, edge_weight);
+                        stats.nodes.prune_subpath_history++;
                         continue;
-
-                    } else {
-                        subpath_stats->threads[thread_id].nodes_not_pruned++;
                     }
                 }
 
-                ctimer.start(cpu_timer::NODE_END, thread_id);
+                stats.cpu_timer.enumerate_node_end.start_timer();
                 trace.write(TRACE_NO_PRUNE, 1);
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
-                // path_node temp(problem_state.current_path, lower_bound, problem_state.origin_node, problem_state.history_key);
-                // ready_list.push_back(temp);
                 local_pools->thread(thread_id).push_to_ready_list(
                     taken_node, lower_bound, history_reference, problem_state.current_cost
                 );
+                ready_count++;
                 problem_state.current_path.pop_back();
                 problem_state.current_cost -= edge_weight; // Use cached value
                 problem_state.history_key.bit_vector[taken_node] = false;
                 problem_state.history_key.last_node = source_node;
-                ctimer.stop(cpu_timer::NODE_END, thread_id);
+                stats.cpu_timer.enumerate_node_end.stop_timer();
             }
         }
         trace.write_end_list();
 
+        stats.nodes.enumerated += enumerated_count;
+        stats.nodes.ready += ready_count;
+        auto &depth_stats = stats.nodes.by_depth[problem_state.current_path.size() + 1];
+        depth_stats.enumerated += enumerated_count;
+        depth_stats.ready += ready_count;
+
         // PROGRESS
-        // COMMENT:ready_node_count : number of nodes in the ready list
-        unsigned long long next_work_above = problem_state.work_above / ready_node_count;
-        unsigned long long remainder = problem_state.work_above % ready_node_count;
-        work_remaining[thread_id] -= next_work_above * pruned_count + remainder;
+        // COMMENT:enumerated_count : number of nodes in the ready list
+        unsigned long long next_work_above = problem_state.work_above / enumerated_count;
+        unsigned long long remainder = problem_state.work_above % enumerated_count;
+        work_remaining[thread_id] -= next_work_above * (enumerated_count - ready_count) + remainder;
 
         // COMMENT: Assigning work remaining for each path_node object in ready list
         // for (unsigned i = 0; i < ready_list.size(); i++)
@@ -1867,19 +1738,11 @@ void solver::enumerate()
         // }
         local_pools->thread(thread_id).update_ready_list_node_value(next_work_above);
 
-        // DIAGNOSTIC: enum_nodes
-        enumerated_nodes[thread_id] += ready_node_count;
-        pruned_nodes[thread_id] += pruned_count;
-        enumerated_nodes_by_depth[thread_id][problem_state.current_path.size()] += ready_node_count;
-        pruned_nodes_by_depth[thread_id][problem_state.current_path.size()] += pruned_count;
-
         // Sort the ready list and push into local pool
-        ctimer.start(cpu_timer::POOL_SORT, thread_id);
-        // if (!ready_list.empty())
-        //     std::sort(ready_list.begin(), ready_list.end(), local_pool_sort);
+        stats.cpu_timer.enumerate_sort_pool.start_timer();
         local_pools->thread(thread_id).sort_ready_list();
         local_pools->thread(thread_id).push_ready_list();
-        ctimer.stop(cpu_timer::POOL_SORT, thread_id);
+        stats.cpu_timer.enumerate_sort_pool.stop_timer();
 
         // int lb_liminsert = problem_state.lower_bound; // save lower bound through enumeration for limit insertion in the history table
 
@@ -1888,6 +1751,8 @@ void solver::enumerate()
         while (local_pools->thread(thread_id).pop_from_active_list(active_node))
         {
             local_pools->thread(thread_id).activate(active_node.taken_node);
+            stats.nodes.popped++;
+            stats.nodes.by_depth[active_node.depth].popped++;
             trace.write_node(active_node.taken_node);
 
             bool prune_thread_stop = false;
@@ -1903,36 +1768,39 @@ void solver::enumerate()
                 trace.write(TRACE_CANCEL_THREAD_STOP, 1);
                 trace.write(static_cast<int>(false), 1);
                 work_remaining[thread_id] -= active_node.current_node_value();
-                thread_stop_schedule++;
+                stats.nodes.prune_thread_stop++;
+                stats.thread_stopping.cancel_schedule++;
                 local_pools->thread(thread_id).deactivate();
                 continue;
             }
 
-            ctimer.start(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
             if (enable_threadstop)
             {
+                stats.cpu_timer.enumerate_thread_stop.start_timer();
                 // COMMENT: we are comparing the active_node(thread_id, last_node) with the request_buffer(thread_id, request_buffer)
                 // Don't we need other parameters such as depth, prefix_cost or  history_key
                 bool prefix_key_matched = false;
                 if (check_stop_request(active_node, &prefix_key_matched))
                 {
+                    stats.nodes.prune_thread_stop++;
                     trace.write(TRACE_CANCEL_THREAD_STOP, 1);
                     trace.write(static_cast<int>(prefix_key_matched), 1);
                     work_remaining[thread_id] -= active_node.current_node_value();
-                    ctimer.stop(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
+                    stats.cpu_timer.enumerate_thread_stop.stop_timer();
                     local_pools->thread(thread_id).deactivate();
                     if (prefix_key_matched)
                         break;
                     else
                         continue;
                 }
+                stats.cpu_timer.enumerate_thread_stop.stop_timer();
             }
-            ctimer.stop(cpu_timer::RECURSIVE_THREAD_STOP, thread_id);
-            ctimer.start(cpu_timer::RECURSIVE_START, thread_id);
+            stats.cpu_timer.enumerate_recursive_start.start_timer();
             if (enumeration_pre_check(active_node)) {
                 local_pools->thread(thread_id).deactivate();
-                continue;
-            } // enumeration-time backtracking, and other preprocessing
+                stats.cpu_timer.enumerate_recursive_start.stop_timer();
+                continue; // enumeration-time backtracking, and other preprocessing
+            }
 
             /* Take */
             int src = problem_state.current_path.back();  // the number of the predecessor to the node being considered
@@ -1959,10 +1827,12 @@ void solver::enumerate()
             problem_state.enumeration_depth++;
             problem_state.work_above = active_node.current_node_value();
 
+            stats.nodes.recursive++;
+            stats.nodes.by_depth[active_node.depth].recursive++;
             trace.write(TRACE_ENUMERATE, 1);
-            ctimer.stop(cpu_timer::RECURSIVE_START, thread_id);
+            stats.cpu_timer.enumerate_recursive_start.stop_timer();
             enumerate();
-            ctimer.start(cpu_timer::RECURSIVE_END, thread_id);
+            stats.cpu_timer.enumerate_recursive_end.start_timer();
 
             /* Untake */
             problem_state.enumeration_depth--;
@@ -1997,15 +1867,19 @@ void solver::enumerate()
                     time_out = true;
                     active_threads = 0;
                     local_pools->thread(thread_id).pop_active_list();
+                    stats.cpu_timer.enumerate_recursive_end.stop_timer();
                     return;
                 }
             }
-            ctimer.stop(cpu_timer::RECURSIVE_END, thread_id);
+            stats.cpu_timer.enumerate_recursive_end.stop_timer();
         }
         trace.write_end_list();
         while (local_pools->thread(thread_id).pop_from_active_list(active_node))
         {
             work_remaining[thread_id] -= active_node.current_node_value();
+            stats.nodes.popped++;
+            stats.nodes.by_depth[active_node.depth].popped++;
+            stats.nodes.prune_thread_stop++;
         }
         local_pools->thread(thread_id).pop_active_list(); // TODO: make sure with thread stopping that this is handled properly
         // if (stop_init && (int)problem_state.cur_solution.size() <= stop_depth) {
@@ -2047,14 +1921,14 @@ void solver::retrieve_input()
     // fd_name += "_BB.sop";
 
     // inFile.open(fd_name);
-    inFile.open(filename);
+    inFile.open(instance_path);
     if (inFile.fail())
     {
-        cerr << "Error: cannot open input file " << filename << " -> " << strerror(errno) << endl;
+        cerr << "Error: cannot open input file " << instance_path << " -> " << strerror(errno) << endl;
         exit(EXIT_FAILURE);
     }
     else
-        std::cout << "Input file is " << filename << endl;
+        std::cout << "Input file is " << instance_path << endl;
 
     // Read input one line at a time, storing the matrix
     vector<vector<int>> file_matrix;
@@ -2391,7 +2265,7 @@ bool solver::split_level_check(deque<sop_state> *solver_container)
     return solver_container->front().current_path.size() != solver_container->back().current_path.size();
 }
 
-bool solver::enumeration_pre_check(const local_pool_node_ref &active_node)
+bool solver_thread::enumeration_pre_check(const local_pool_node_ref &active_node)
 {
     if (active_node.lower_bound() >= best_cost
         // || stop_init
@@ -2402,9 +2276,7 @@ bool solver::enumeration_pre_check(const local_pool_node_ref &active_node)
         trace.write(TRACE_CANCEL_PRECHECK, 1);
         trace.write_detail(active_node.lower_bound(), 4);
         trace.write_detail(best_cost, 4);
-        // if (enable_progress_estimation) //pruning due to enumeration-time backtracking
-        //     estimated_trimmed_percent[thread_id] += active_node.current_node_value; //add the value of this node you are trimming
-        // PROGRESS
+        stats.nodes.prune_precheck++;
         work_remaining[thread_id] -= active_node.current_node_value();
 
         // cur_active_tree.incre_children_cnt(Allocator);
@@ -2418,7 +2290,7 @@ bool solver::enumeration_pre_check(const local_pool_node_ref &active_node)
     return false;
 }
 
-void solver::prune(int source_node, int taken_node, int edge_weight)
+void solver_thread::prune(int source_node, int taken_node, int edge_weight)
 {
     problem_state.current_path.pop_back();               // Undo temporary path addition
     problem_state.current_cost -= edge_weight;           // Undo temporary cost addition
@@ -2426,8 +2298,9 @@ void solver::prune(int source_node, int taken_node, int edge_weight)
     problem_state.history_key.last_node = source_node;      // Undo temporary history key
 }
 
-int solver::dynamic_hungarian(int src, int dst)
+int solver_thread::dynamic_hungarian(int src, int dst)
 {
+    stats.cpu_timer.lower_bound.start_timer();
     problem_state.hungarian_solver.fix_row(src, dst);
     problem_state.hungarian_solver.fix_column(dst, src);
     problem_state.hungarian_solver.solve_dynamic();
@@ -2435,10 +2308,11 @@ int solver::dynamic_hungarian(int src, int dst)
     int lb = problem_state.hungarian_solver.get_matching_cost() / 2; // based on the conversion between MCPM and SOP, the actual lower bound is the Hungarian solution / 2
     problem_state.hungarian_solver.undue_row(src, dst);
     problem_state.hungarian_solver.undue_column(dst, src);
+    stats.cpu_timer.lower_bound.stop_timer();
     return lb;
 }
 
-bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, HistoryReference &history_reference, int source_node, int taken_node)
+bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, HistoryReference &history_reference, int source_node, int taken_node)
 {
     int prefix_cost = problem_state.current_cost;
     bool pruned = false;
@@ -2446,7 +2320,9 @@ bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, boo
     Hash128 hash = problem_state.hash;
     hash = hasher.toggle_bit(hash, taken_node);
     hash = hasher.change_last_node(hash, source_node, taken_node);
+    stats.prefixes.checks++;
 
+    stats.cpu_timer.prefix_history_lookup.start_timer();
     history_table.retrieve_or_insert<PrefixEntry>(
         hash, problem_state.current_path.size(),
         [&](HistoryOutcome outcome, PrefixEntry *entry){
@@ -2456,38 +2332,47 @@ bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, boo
                     entry->lower_bound = -1;
                     entry->state = HistoryState::EXPLORING;
                     entry->active_thread = thread_id;
+                    stats.prefixes.not_found++;
+                    stats.prefixes.inserted++;
                     break;
 
                 case HistoryOutcome::NotInserted:
+                    stats.prefixes.not_found++;
+                    stats.prefixes.not_inserted++;
                     break;
 
                 case HistoryOutcome::Found:
+                    stats.prefixes.found++;
+                    *found = true;
                     if (prefix_cost > entry->cost || (entry->state != HistoryState::UNEXPLORED && prefix_cost == entry->cost)) {
                         /* History entry is better than the current path: prune */
+                        stats.prefixes.pruned++;
+                        stats.nodes.prune_prefix_history++;
                         pruned = true;
 
                     } else {
                         /* Current path is better than history entry: update entry */
+                        stats.prefixes.updated++;
 
                         if (entry->state == HistoryState::EXPLORING && enable_threadstop) {
                             /* Stop inferior thread */
                             if (active_threads > 0 && entry->active_thread != thread_id)
                             {
-                                ctimer.start(cpu_timer::THREAD_STOP, thread_id);
+                                stats.cpu_timer.thread_stop_request.start_timer();
                                 int target_id = entry->active_thread;
                                 if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size())
                                 {
                                     thread_requests[target_id].lock.lock();
                                     if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size()) // extra validation
                                     {
-                                        thread_stop_requested++;
+                                        stats.thread_stopping.requests++;
                                         thread_requests[target_id].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
                                                                                             entry->cost, target_id, key.bit_vector);
                                         thread_requests[target_id].has_request = true;
                                     }
                                     thread_requests[target_id].lock.unlock();
                                 }
-                                ctimer.stop(cpu_timer::THREAD_STOP, thread_id);
+                                stats.cpu_timer.thread_stop_request.stop_timer();
                             }
                         }
 
@@ -2509,10 +2394,8 @@ bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, boo
         },
         &history_reference
     );
-
-    if (pruned) {
-        return true;
-    }
+    stats.cpu_timer.prefix_history_lookup.stop_timer();
+    if (pruned) return true;
 
     if (*lowerbound == -1) {
         *lowerbound = dynamic_hungarian(source_node, taken_node);
@@ -2523,6 +2406,7 @@ bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, boo
                     if (!exists) return;
                     if (entry->active_thread != thread_id) {
                         pruned = true;
+                        stats.nodes.prune_prefix_history++;
                         return;
                     }
                     entry->lower_bound = *lowerbound;
@@ -2534,10 +2418,16 @@ bool solver::history_utilization(HistoryKey &key, int cost, int *lowerbound, boo
         }
     }
 
-    return *lowerbound >= best_cost;
+    /* Prune if lower bound of current path cannot be better than best cost */
+    if (*lowerbound >= best_cost) {
+        stats.nodes.prune_lower_bound++;
+        return true;
+    } else {
+        return false;
+    }
 }
 
-bool solver::subpath_history_utilization(const std::vector<int> &path) {
+bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
     if (!enable_subpath_history_table) return false;
     if (lkh_subpaths_only && !lkh_entry_processed) return false;
 
@@ -2560,49 +2450,53 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
         subpath_cost += cost_graph[src][dst].weight;
         if (length < 4) continue;
 
-        subpath_stats->threads[thread_id].checks++;
-        subpath_stats->threads[thread_id].by_depth[length].checks++;
+        stats.subpaths.checks++;
+        stats.subpaths.by_depth[length].checks++;
 
         /* Retrieve subpath from subpath history table */
+        stats.cpu_timer.subpath_history_lookup.start_timer();
         history_table.retrieve_or_insert<SubpathEntry>(
             hash, static_cast<size_t>(length),
             [&](HistoryOutcome outcome, SubpathEntry *entry) {
                 switch (outcome) {
                     case HistoryOutcome::Inserted:
                         entry->cost = subpath_cost;
-                        subpath_stats->threads[thread_id].checks_no_match++;
-                        subpath_stats->threads[thread_id].by_depth[length].checks_no_match++;
+                        stats.subpaths.not_found++;
+                        stats.subpaths.inserted++;
+                        stats.subpaths.by_depth[length].checks_no_match++;
                         break;
 
                     case HistoryOutcome::NotInserted:
-                        subpath_stats->threads[thread_id].checks_no_match++;
-                        subpath_stats->threads[thread_id].by_depth[length].checks_no_match++;
+                        stats.subpaths.not_found++;
+                        stats.subpaths.not_inserted++;
+                        stats.subpaths.by_depth[length].checks_no_match++;
                         break;
 
                     case HistoryOutcome::Found:
+                        stats.subpaths.found++;
                         if (subpath_cost > entry->cost) {
                             /* Better subpath found in history table, prune */
                             pruned = true;
-                            subpath_stats->threads[thread_id].nodes_pruned++;
-                            subpath_stats->threads[thread_id].checks_pruned++;
-                            subpath_stats->threads[thread_id].by_depth[length].checks_pruned++;
+                            stats.subpaths.pruned++;
+                            stats.subpaths.by_depth[length].checks_pruned++;
 
                         } else if (subpath_cost < entry->cost) {
                             /* This subpath is better than the one in history table, so update history table */
                             entry->cost = subpath_cost;
                             // TODO stop inferior threads
-                            subpath_stats->threads[thread_id].checks_improved++;
-                            subpath_stats->threads[thread_id].by_depth[length].checks_improved++;
+                            stats.subpaths.updated++;
+                            stats.subpaths.by_depth[length].checks_improved++;
 
                         } else {
                             /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
-                            subpath_stats->threads[thread_id].checks_equal++;
-                            subpath_stats->threads[thread_id].by_depth[length].checks_equal++;
+                            stats.subpaths.equal++;
+                            stats.subpaths.by_depth[length].checks_equal++;
                         }
                         break;
                 }
             }
         );
+        stats.cpu_timer.subpath_history_lookup.stop_timer();
         if (pruned) return true;
     }
     return false;
@@ -2611,7 +2505,7 @@ bool solver::subpath_history_utilization(const std::vector<int> &path) {
 static int stolen_from;
 /* BEGIN WORK STEALING*/
 // WORKSTEALING
-bool solver::workload_request()
+bool solver_thread::workload_request()
 {
     if (thread_requests[thread_id].has_request)
     {
@@ -2671,31 +2565,32 @@ bool solver::workload_request()
         {
             if (active_threads <= 0)
             {
-                time_workstealing = time_workstealing + t.get_time_seconds();
+                stats.work_stealing.time_stealing += t.get_time_seconds();
                 return false;
             }
             int target = local_pools->choose_victim(thread_id, work_remaining, stolen_from);
 
+            stats.work_stealing.attempts++;
             if (target == -1)
             {
                 misses++;
                 stolen_from = 0;
                 continue;
             }
-            steal_attempts[target]++;
+            stats.work_stealing.by_target[target].attempts++;
             if (local_pools->thread(target).pop_from_zero_list(new_node))
             {
+                stats.nodes.popped++;
+                stats.nodes.by_depth[new_node.sequence.size()].popped++;
+                stats.nodes.recursive++;
+                stats.nodes.by_depth[new_node.sequence.size()].recursive++;
                 work_remaining[target] -= new_node.current_node_value;
                 problem_state = generate_solver_state(new_node);
                 problem_state.work_above = new_node.current_node_value;
                 active_threads++;
-                times_work_stolen++;
-                steal_success[thread_id]++;
-                time_workstealing = time_workstealing + t.get_time_seconds();
-                steal_misses += misses;
-                // steal_times_lock.lock();
-                // steal_times.push_back(main_timer.get_time_seconds());
-                // steal_times_lock.unlock();
+                stats.work_stealing.time_stealing += t.get_time_seconds();
+                stats.work_stealing.success++;
+                stats.work_stealing.by_target[target].success++;
                 local_pools->thread(thread_id).initial_state(problem_state.current_path);
                 trace_initial_state(trace, &problem_state);
                 return true;
@@ -2707,7 +2602,7 @@ bool solver::workload_request()
     return false;
 }
 
-sop_state solver::generate_solver_state(path_node &subproblem)
+sop_state solver_thread::generate_solver_state(path_node &subproblem)
 {
     sop_state state = default_state;
 
@@ -2768,7 +2663,7 @@ sop_state solver::generate_solver_state(path_node &subproblem)
 // DIAGNOSTIC
 /* BEGIN DIAGNOSTIC FUNCTIONS */
 
-void solver::print_state(sop_state &state)
+void solver_thread::print_state(sop_state &state)
 {
     std::cout << "Path: ";
     for (int i = 0; i < (int)state.current_path.size(); i++)
@@ -2791,7 +2686,7 @@ void solver::print_state(sop_state &state)
     std::cout << std::endl;
 }
 
-bool solver::check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched)
+bool solver_thread::check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched)
 {
     if (!thread_requests[thread_id].has_request) return false;
     
@@ -2802,39 +2697,43 @@ bool solver::check_stop_request(const local_pool_node_ref &active_node, bool *pr
         return false;
     }
 
-    thread_stop_observed++;
+    stats.cpu_timer.thread_stop_check.start_timer();
+    stats.thread_stopping.checks++;
     const request_packet &rp = thread_requests[thread_id].request;
 
     if (rp.target_depth == active_node.depth && rp.target_last_node == active_node.taken_node) {
-        thread_stop_check++;
+        stats.thread_stopping.compared++;
         if (active_node.cost() >= rp.target_prefix_cost && rp.key == local_pools->thread(thread_id).current_key) {
-            thread_stopped_successfully++;
+            stats.thread_stopping.success++;
             thread_requests[thread_id].has_request = false;
             thread_requests[thread_id].lock.unlock();
+            stats.cpu_timer.thread_stop_check.stop_timer();
             return true; // Indicate that a stop request was found and handled
         }
 
     } else if (rp.target_depth < active_node.depth && rp.target_last_node == problem_state.current_path[rp.target_depth - 1]) {
-        thread_stop_check++;
+        stats.thread_stopping.compared++;
         local_pool_node_ref node;
         bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
         if (found && node.cost() >= rp.target_prefix_cost && rp.key == node.bit_vector()) {
-            thread_stopped_successfully++;
+            stats.thread_stopping.success++;
             *prefixKeyMatched = true;
             thread_requests[thread_id].has_request = false;
             if (rp.target_depth < active_node.depth - 1)
                 prune_to_depth = rp.target_depth;
             thread_requests[thread_id].lock.unlock();
+            stats.cpu_timer.thread_stop_check.stop_timer();
             return true; // Indicate that a stop request was found and handled
         }
     }
 
     thread_requests[thread_id].has_request = false;
     thread_requests[thread_id].lock.unlock();
+    stats.cpu_timer.thread_stop_check.stop_timer();
     return false;
 }
  
-bool solver::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
+bool solver_thread::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
 {
     boost::dynamic_bitset<> temp_history_key(instance_size);
     int current_cost = 0;
