@@ -69,6 +69,7 @@ struct stats_subpaths {
         for (unsigned i = 0; i < thread_count; i++)
             if (threads[i] != nullptr) totals += *threads[i];
 
+        if (totals.checks == 0) return;
         std::cout << "SUBPATH HISTORY\n";
         std::cout << "Checks:            " << totals.checks << "\n";
         std::cout << "Found:             " << totals.found << "\n";

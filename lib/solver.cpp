@@ -500,7 +500,7 @@ void solver::solve()
 
     hasher = Hasher(static_cast<size_t>(instance_size));
 
-    global_stats = new stats_global(thread_total + 1, instance_size);
+    global_stats = new stats_global(thread_total + 1, instance_size, history_table);
     // thread_requests.resize(thread_total);
     // for (int i = 0; i < thread_total; ++i)
     // {
@@ -620,6 +620,8 @@ void solver::solve()
     global_stats->prefixes.print_results();
     std::cout << "--------------------------------------------------" << std::endl;
     global_stats->subpaths.print_results();
+    std::cout << "--------------------------------------------------" << std::endl;
+    global_stats->history_table.print_results();
     std::cout << "--------------------------------------------------" << std::endl;
     global_stats->thread_stopping.print_results();
     std::cout << "--------------------------------------------------" << std::endl;
@@ -1341,6 +1343,7 @@ void solver_thread::processBestTour()
                     history_table.retrieve_or_insert<PrefixEntry>(
                         subpath_hash, static_cast<size_t>(depth),
                         [&](HistoryOutcome outcome, PrefixEntry *entry) {
+                            collect_history_stats(outcome);
                             switch (outcome) {
                                 case HistoryOutcome::Inserted:
                                     entry->cost = subpath_cost;
@@ -1410,6 +1413,7 @@ void solver_thread::processBestTour()
                     history_table.retrieve_or_insert<SubpathEntry>(
                         subpath_hash, static_cast<size_t>(depth),
                         [&](HistoryOutcome outcome, SubpathEntry *entry) {
+                            collect_history_stats(outcome);
                             switch (outcome) {
                                 case HistoryOutcome::Inserted:
                                     entry->cost = subpath_cost;
@@ -1447,6 +1451,7 @@ void solver_thread::processBestTour()
             history_table.retrieve_or_insert<PrefixEntry>(
                 prefix_hash, static_cast<size_t>(depth),
                 [&](HistoryOutcome outcome, PrefixEntry *entry) {
+                    collect_history_stats(outcome);
                     switch (outcome) {
                         case HistoryOutcome::Inserted:
                             entry->cost = prefix_cost;
@@ -2326,6 +2331,7 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
     history_table.retrieve_or_insert<PrefixEntry>(
         hash, problem_state.current_path.size(),
         [&](HistoryOutcome outcome, PrefixEntry *entry){
+            collect_history_stats(outcome);
             switch (outcome) {
                 case HistoryOutcome::Inserted:
                     entry->cost = prefix_cost;
@@ -2458,6 +2464,7 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         history_table.retrieve_or_insert<SubpathEntry>(
             hash, static_cast<size_t>(length),
             [&](HistoryOutcome outcome, SubpathEntry *entry) {
+                collect_history_stats(outcome);
                 switch (outcome) {
                     case HistoryOutcome::Inserted:
                         entry->cost = subpath_cost;

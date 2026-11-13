@@ -225,6 +225,14 @@ private:
 
     void enable_trace(const string &trace_path, const string &trace_path_ext);
 
+    inline void collect_history_stats(HistoryOutcome outcome) {
+        switch (outcome) {
+            case HistoryOutcome::Found: stats.history_table.found++; break;
+            case HistoryOutcome::Inserted: stats.history_table.inserted++; break;
+            case HistoryOutcome::NotInserted: stats.history_table.not_inserted++; break;
+        }
+    }
+
     friend class solver;
 };
 

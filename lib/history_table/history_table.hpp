@@ -133,6 +133,11 @@ public:
             {}
 
     /**
+     * Get bucket count
+     */
+    size_t get_bucket_count() const { return bucket_count; }
+
+    /**
      * Send request to start loading bucket into cache.
      * Can load in background, then be accessed quickly later when needed
      * @param hash The hash to retrieve
