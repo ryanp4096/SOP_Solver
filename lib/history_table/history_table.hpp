@@ -225,6 +225,19 @@ public:
         }
     }
 
+    /**
+     * Diagnostic: distribution of entries in buckets
+     * @return Vector containing number of buckets containing i elements for each index i
+     */
+    std::vector<size_t> bucket_distribution() const {
+        std::vector<size_t> distribution(slots_per_bucket + 1, 0);
+        for (size_t i = 0; i < bucket_count; i++) {
+            size_t entries = __builtin_popcount(static_cast<uint32_t>(buckets[i].occupied_slot_mask));
+            distribution[entries]++;
+        }
+        return distribution;
+    }
+
 private:
     /**
      * Searches a bucket to see if it contains a hash.
@@ -246,14 +259,14 @@ private:
     }
 
     /**
-     * Get the bucket of a 128-bit hash, based on the upper 32 bits
+     * Get the bucket of a 128-bit hash, based on the upper ~32 bits
      * @param hash A hash
      * @return The bucket that hash would be contained in
      */
     size_t hash_to_bucket(Hash128 hash) const {
-        // converts high 32 bits of hash from range [0, 2^32) to range [0, bucket_count)
-        // this code is equivalent to high_32_bits * (bucket_count / 2^32)
-        return static_cast<size_t>(((hash.high >> 32) * bucket_count) >> 32);
+        // converts high bits of hash from range [0, 2^64) to range [0, bucket_count)
+        // this code is equivalent to high_bits * (bucket_count / 2^64)
+        return static_cast<uint64_t>((static_cast<unsigned __int128>(hash.high) * bucket_count) >> 64);
     }
 
     /**

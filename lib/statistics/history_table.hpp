@@ -59,6 +59,13 @@ struct stats_history_table {
         std::cout << "    Entries:        " << totals.inserted << " / " << entries
                                             << " (" << percent(totals.inserted, entries) << "%)\n";
         std::cout << "    Avg Per Bucket: " << (static_cast<double>(totals.inserted) / buckets) << " / " << slots_per_bucket << std::endl;
+
+        std::vector<size_t> dist = history_table.bucket_distribution();
+        std::cout << "Bucket Distribution:\n";
+        for (size_t i = 0; i < dist.size(); i++) {
+            size_t b = dist[i];
+            std::cout << "    Size " << i << ": " << b << " buckets (" << percent(b, buckets) << "%)" << std::endl;
+        }
     }
 };
 
