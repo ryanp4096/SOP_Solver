@@ -34,6 +34,7 @@ struct PrefixEntry {
 struct SubpathEntry {
     int32_t cost;               // the cost of the prefix
     uint32_t active_threads;    // bitmask of threads exploring a path that contains this subpath
+    int32_t ordering;
 };
 
 

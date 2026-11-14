@@ -1417,6 +1417,7 @@ void solver_thread::processBestTour()
                             switch (outcome) {
                                 case HistoryOutcome::Inserted:
                                     entry->cost = subpath_cost;
+                                    entry->ordering = -1;
                                     subpath_stats.inserted++;
                                     if (print_each) std::cout << "[processBestTour] Subpath Inserted - depth " << depth << " shift " << shift << " (lkh cost: " << subpath_cost << ")" << std::endl;
                                     break;
@@ -1430,6 +1431,7 @@ void solver_thread::processBestTour()
                                     int old_cost = entry->cost;
                                     if (subpath_cost < old_cost) {
                                         entry->cost = subpath_cost;
+                                        entry->ordering = -1;
                                         subpath_stats.updated++;
                                         if (print_each) std::cout << "[processBestTour] Subpath Updated - depth " << depth << " shift " << shift << " (entry: " << old_cost << ", lkh: " << subpath_cost << ")" << std::endl;
                                     
@@ -2439,6 +2441,7 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
 
     Hash128 hash = hasher.hash_single_bit(path.back());
     int subpath_cost = 0;
+    int ordering = 0;
     bool pruned = false;
     
     int length_limit = path.size() - 1;
@@ -2456,6 +2459,16 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         subpath_cost += cost_graph[src][dst].weight;
         if (length < 4) continue;
 
+        /* Ordering of (length - 2) internal nodes */
+        if (length <= 14) {
+            int index = 0;
+            for (size_t i = path.size() - length + 2; i <= path.size() - 2; i++)
+                index += (path[i] < dst);
+            ordering = ordering * (length - 2) + index;
+        } else {
+            ordering = -1;
+        }
+
         stats.subpaths.checks++;
         stats.subpaths.by_depth[length].checks++;
 
@@ -2468,6 +2481,7 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
                 switch (outcome) {
                     case HistoryOutcome::Inserted:
                         entry->cost = subpath_cost;
+                        entry->ordering = ordering;
                         stats.subpaths.not_found++;
                         stats.subpaths.inserted++;
                         stats.subpaths.by_depth[length].checks_no_match++;
@@ -2490,13 +2504,31 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
                         } else if (subpath_cost < entry->cost) {
                             /* This subpath is better than the one in history table, so update history table */
                             entry->cost = subpath_cost;
+                            entry->ordering = ordering;
                             // TODO stop inferior threads
                             stats.subpaths.updated++;
                             stats.subpaths.by_depth[length].checks_improved++;
 
                         } else {
-                            /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
-                            stats.subpaths.equal++;
+                            /* This subpath is equal cost to the one in history table */
+                            if (ordering == -1) {
+                                /* No ordering data (too long) */
+                                stats.subpaths.equal++;
+
+                            } else if (entry->ordering == -1) {
+                                /* No ordering data (entry does not have stored order) */
+                                entry->ordering = ordering;
+                                stats.subpaths.equal++;
+
+                            } else if (entry->ordering == ordering) {
+                                /* Same subpath in same order in a different spot - need to check both, can't prune */
+                                stats.subpaths.equal_same_ordering++;
+
+                            } else {
+                                /* Equal cost subpath in different order - only need to check one order, so prune */
+                                pruned = true;
+                                stats.subpaths.equal_different_ordering++;
+                            }
                             stats.subpaths.by_depth[length].checks_equal++;
                         }
                         break;

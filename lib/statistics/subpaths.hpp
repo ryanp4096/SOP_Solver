@@ -22,16 +22,18 @@ struct stats_subpaths_depth {
 };
 
 struct stats_subpaths_thread {
-    unsigned long long checks{0};           // total times an individual subpath was checked
+    unsigned long long checks{0};                       // total times an individual subpath was checked
 
-    unsigned long long found{0};            // matching subpath found in history table
-    unsigned long long pruned{0};           // there was an existing superior matching subpath, leading to pruning
-    unsigned long long equal{0};            // there was an existing matching subpath with equal cost (can't prune)
-    unsigned long long updated{0};          // this subpath was better than the existing subpath. this could be a thread stop once that is implemented
+    unsigned long long found{0};                        // matching subpath found in history table
+    unsigned long long pruned{0};                       // there was an existing superior matching subpath, leading to pruning
+    unsigned long long equal{0};                        // there was an existing matching subpath with equal cost (can't prune)
+    unsigned long long equal_same_ordering{0};          // existing subpath has same cost in same order (can't prune)
+    unsigned long long equal_different_ordering{0};     // existing subpath has same cost, but different order, leading to pruning
+    unsigned long long updated{0};                      // this subpath was better than the existing subpath. this could be a thread stop once that is implemented
 
-    unsigned long long not_found{0};        // subpath not found in history table
-    unsigned long long inserted{0};         // not in history table, inserted
-    unsigned long long not_inserted{0};     // not in history table, not inserted (out of memory or lkh subpaths only)
+    unsigned long long not_found{0};                    // subpath not found in history table
+    unsigned long long inserted{0};                     // not in history table, inserted
+    unsigned long long not_inserted{0};                 // not in history table, not inserted (out of memory or lkh subpaths only)
 
     std::vector<stats_subpaths_depth> by_depth;
 
@@ -42,6 +44,8 @@ struct stats_subpaths_thread {
         found += t.found;
         pruned += t.pruned;
         equal += t.equal;
+        equal_same_ordering += t.equal_same_ordering;
+        equal_different_ordering += t.equal_different_ordering;
         updated += t.updated;
         not_found += t.not_found;
         inserted += t.inserted;
@@ -71,14 +75,17 @@ struct stats_subpaths {
 
         if (totals.checks == 0) return;
         std::cout << "SUBPATH HISTORY\n";
-        std::cout << "Checks:            " << totals.checks << "\n";
-        std::cout << "Found:             " << totals.found << "\n";
-        std::cout << "    Pruned:        " << totals.pruned << "\n";
-        std::cout << "    Equal Cost:    " << totals.equal << "\n";
-        std::cout << "    Updated:       " << totals.updated << "\n";
-        std::cout << "Not Found:         " << totals.not_found << "\n";
-        std::cout << "    Inserted:      " << totals.inserted << "\n";
-        std::cout << "    Not Inserted:  " << totals.not_inserted << std::endl;
+        std::cout << "Checks:             " << totals.checks << "\n";
+        std::cout << "Found:              " << totals.found << "\n";
+        std::cout << "    Pruned:         " << totals.pruned << "\n";
+        std::cout << "    Equal Cost:     " << totals.equal + totals.equal_same_ordering + totals.equal_different_ordering << "\n";
+        std::cout << "        Diff Order: " << totals.equal_different_ordering << "\n";
+        std::cout << "        Same Order: " << totals.equal_same_ordering << "\n";
+        std::cout << "        No Order:   " << totals.equal << "\n";
+        std::cout << "    Updated:        " << totals.updated << "\n";
+        std::cout << "Not Found:          " << totals.not_found << "\n";
+        std::cout << "    Inserted:       " << totals.inserted << "\n";
+        std::cout << "    Not Inserted:   " << totals.not_inserted << std::endl;
 
         // std::cout << "Checks By Depth: " << std::endl;
 
