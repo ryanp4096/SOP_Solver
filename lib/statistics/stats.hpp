@@ -23,7 +23,7 @@ struct stats_thread {
 
     stats_thread(unsigned instance_size)
         : nodes{instance_size},
-          prefixes{},
+          prefixes{instance_size},
           subpaths{instance_size},
           thread_stopping{},
           work_stealing{instance_size},
@@ -49,7 +49,7 @@ struct stats_global {
         : thread_count{thread_count},
           instance_size{instance_size},
           nodes{thread_count, instance_size},
-          prefixes{thread_count},
+          prefixes{thread_count, instance_size},
           subpaths{thread_count, instance_size},
           thread_stopping{thread_count},
           work_stealing{thread_count},
