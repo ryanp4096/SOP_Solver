@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <iostream>
+#include <iomanip>
 #include "../history_table/history_table.hpp"
 
 struct stats_history_table_thread {
@@ -38,7 +39,7 @@ struct stats_history_table {
             if (threads[i] != nullptr) totals += *threads[i];
         
         auto percent = [](unsigned long long x, unsigned long long y) {
-            return (100.0 * x) / y;
+            return (y == 0) ? 0.0 : ((100.0 * x) / y);
         };
 
         unsigned long long insert_attempts = totals.inserted + totals.not_inserted + totals.replaced;
@@ -47,18 +48,19 @@ struct stats_history_table {
         size_t entries = buckets * slots_per_bucket;
 
         std::cout << "HISTORY TABLE\n";
-        std::cout << "Requests:           " << requests << "\n";
-        std::cout << "    Found:          " << totals.found << " (" << percent(totals.found, requests) << "%)\n";
-        std::cout << "    Not Found:      " << insert_attempts << " (" << percent(insert_attempts, requests) << "%)\n";
-        std::cout << "Insertions:         " << insert_attempts << "\n";
-        std::cout << "    Inserted:       " << totals.inserted << " (" << percent(totals.inserted, insert_attempts) << "%)\n";
-        std::cout << "    Replaced:       " << totals.replaced << " (" << percent(totals.replaced, insert_attempts) << "%)\n";
-        std::cout << "    Not Inserted:   " << totals.not_inserted << " (" << percent(totals.not_inserted, insert_attempts) << "%)\n";
+        std::cout << "Requests:           " << std::setw(12) << std::right << requests << "\n";
+        std::cout << "    Found:          " << std::setw(12) << std::right << totals.found << "  (" << percent(totals.found, requests) << "%)\n";
+        std::cout << "    Not Found:      " << std::setw(12) << std::right << insert_attempts << "  (" << percent(insert_attempts, requests) << "%)\n";
+        std::cout << "Insertions:         " << std::setw(12) << std::right << insert_attempts << "\n";
+        std::cout << "    Inserted:       " << std::setw(12) << std::right << totals.inserted << "  (" << percent(totals.inserted, insert_attempts) << "%)\n";
+        std::cout << "    Replaced:       " << std::setw(12) << std::right << totals.replaced << "  (" << percent(totals.replaced, insert_attempts) << "%)\n";
+        std::cout << "    Not Inserted:   " << std::setw(12) << std::right << totals.not_inserted << "  (" << percent(totals.not_inserted, insert_attempts) << "%)\n";
         std::cout << "Capacity:\n";
         std::cout << "    Buckets:        " << buckets << "\n";
         std::cout << "    Entries:        " << totals.inserted << " / " << entries
-                                            << " (" << percent(totals.inserted, entries) << "%)\n";
+                                            << "  (" << percent(totals.inserted, entries) << "%)\n";
         std::cout << "    Avg Per Bucket: " << (static_cast<double>(totals.inserted) / buckets) << " / " << slots_per_bucket << std::endl;
+        std::cout << "    Memory Usage:   " << getPeakMemoryUsage() / 1048576 << " MB" << std::endl;
 
         std::vector<size_t> dist = history_table.bucket_distribution();
         std::cout << "Bucket Distribution:\n";

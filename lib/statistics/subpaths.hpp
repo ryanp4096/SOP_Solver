@@ -3,20 +3,21 @@
 
 #include <vector>
 #include <iostream>
+#include <iomanip>
 
 struct stats_subpaths_depth {
-    unsigned long long checks{0};           // total times a subpath at this depth was checked
-    unsigned long long checks_pruned{0};    // there was an existing superior matching subpath, leading to pruning
-    unsigned long long checks_equal{0};     // there was an existing matching subpath with equal cost (can't prune)
-    unsigned long long checks_improved{0};  // there was an existing matching subpath, but it was inferior to the current subpath. this could be a thread stop once that is implemented
-    unsigned long long checks_no_match{0};  // there was not an existing matching subpath
+    unsigned long long pruned{0};       // there was an existing superior matching subpath, leading to pruning
+    unsigned long long equal{0};        // there was an existing matching subpath with equal cost (can't prune)
+    unsigned long long updated{0};     // there was an existing matching subpath, but it was inferior to the current subpath. this could be a thread stop once that is implemented
+    unsigned long long inserted{0};     // there was not an existing matching subpath, so it was inserted
+    unsigned long long not_inserted{0}; // there was not an existing matching subpath and it could not be inserted
 
     stats_subpaths_depth &operator+=(const stats_subpaths_depth &d) {
-        checks += d.checks;
-        checks_pruned += d.checks_pruned;
-        checks_equal += d.checks_equal;
-        checks_improved += d.checks_improved;
-        checks_no_match += d.checks_no_match;
+        pruned += d.pruned;
+        equal += d.equal;
+        updated += d.updated;
+        inserted += d.inserted;
+        not_inserted += d.not_inserted;
         return *this;
     }
 };
@@ -69,37 +70,60 @@ struct stats_subpaths {
         for (unsigned i = 0; i < thread_count; i++)
             if (threads[i] != nullptr) totals += *threads[i];
 
+        auto percent = [](unsigned long long x, unsigned long long y) {
+            return (y == 0) ? 0.0 : ((100.0 * x) / y);
+        };
+
         if (totals.checks == 0) return;
+
+        std::cout << std::fixed << std::setprecision(3);
+
         std::cout << "SUBPATH HISTORY\n";
-        std::cout << "Checks:            " << totals.checks << "\n";
-        std::cout << "Found:             " << totals.found << "\n";
-        std::cout << "    Pruned:        " << totals.pruned << "\n";
-        std::cout << "    Equal Cost:    " << totals.equal << "\n";
-        std::cout << "    Updated:       " << totals.updated << "\n";
-        std::cout << "Not Found:         " << totals.not_found << "\n";
-        std::cout << "    Inserted:      " << totals.inserted << "\n";
-        std::cout << "    Not Inserted:  " << totals.not_inserted << std::endl;
+        std::cout << "Checks:           " << std::setw(12) << std::right << totals.checks << "\n";
+        std::cout << "Found:            " << std::setw(12) << std::right << totals.found << "  (" << percent(totals.found, totals.checks) << "%)\n";
+        std::cout << "    Pruned:       " << std::setw(12) << std::right << totals.pruned << "  (" << percent(totals.pruned, totals.checks) << "%)\n";
+        std::cout << "    Equal Cost:   " << std::setw(12) << std::right << totals.equal << "  (" << percent(totals.equal, totals.checks) << "%)\n";
+        std::cout << "    Updated:      " << std::setw(12) << std::right << totals.updated << "  (" << percent(totals.updated, totals.checks) << "%)\n";
+        std::cout << "Not Found:        " << std::setw(12) << std::right << totals.not_found << "  (" << percent(totals.not_found, totals.checks) << "%)\n";
+        std::cout << "    Inserted:     " << std::setw(12) << std::right << totals.inserted << "  (" << percent(totals.inserted, totals.checks) << "%)\n";
+        std::cout << "    Not Inserted: " << std::setw(12) << std::right << totals.not_inserted << "  (" << percent(totals.not_inserted, totals.checks) << "%)\n";
 
-        // std::cout << "Checks By Depth: " << std::endl;
+        unsigned first;
+        for (first = 0; first <= instance_size; first++) {
+            const auto &d = totals.by_depth[first];
+            unsigned long long checks = d.pruned + d.equal + d.updated + d.inserted + d.not_inserted;
+            if (checks != 0) break;
+        }
+        unsigned last;
+        for (last = instance_size; last >= 0; last--) {
+            const auto &d = totals.by_depth[last];
+            unsigned long long checks = d.pruned + d.equal + d.updated + d.inserted + d.not_inserted;
+            if (checks != 0) break;
+        }
 
-        // Readable
-        // for (unsigned j = 0; j < instance_size + 1; j++) {
-        //     std::cout << "   Depth " << j << ": ";
-        //     std::cout << totals.by_depth[j].checks << " (";
-        //     std::cout << "P: " << totals.by_depth[j].checks_pruned;
-        //     std::cout << " Eq: " << totals.by_depth[j].checks_equal;
-        //     std::cout << " Imp: " << totals.by_depth[j].checks_improved;
-        //     std::cout << " NM: " << totals.by_depth[j].checks_no_match;
-        //     std::cout << ")" << std::endl;
-        // }
+        std::cout << std::setw(9) << std::left << "By Depth:" << " ";
+        std::cout << std::setw(12) << std::right << "Checks" << " ";
+        std::cout << std::setw(8) << std::right << "Pruned" << " ";
+        std::cout << std::setw(8) << std::right << "Equal" << " ";
+        std::cout << std::setw(8) << std::right << "Updated" << " ";
+        std::cout << std::setw(8) << std::right << "NotFound" << " ";
+        std::cout << std::setw(12) << std::right << "Entries" << " ";
+        std::cout << std::setw(8) << std::right << " Prunes/Entry" << "\n";
 
-        // Table (for spreadsheets)
-        // std::cout << "Depth\tChecks\tPruned\tEqual\tImproved\tNoMatch" << std::endl;
-        // for (unsigned j = 0; j < instance_size + 1; j++) {
-        //     std::cout << j << "\t" << totals.by_depth[j].checks << "\t";
-        //     std::cout << totals.by_depth[j].checks_pruned << "\t" << totals.by_depth[j].checks_equal << "\t";
-        //     std::cout << totals.by_depth[j].checks_improved << "\t" << totals.by_depth[j].checks_no_match << std::endl;
-        // }
+        for (unsigned i = first; i <= last; i++) {
+            const auto &d = totals.by_depth[i];
+            unsigned long long found = d.pruned + d.equal + d.updated;
+            unsigned long long not_found = d.inserted + d.not_inserted;
+            unsigned long long checks = found + not_found;
+            std::cout << std::setw(9) << std::left << "    [" + std::to_string(i) + "]" << " ";
+            std::cout << std::setw(12) << std::right << checks << " ";
+            std::cout << std::setw(7) << std::right << percent(d.pruned, checks) << "% ";
+            std::cout << std::setw(7) << std::right << percent(d.equal, checks) << "% ";
+            std::cout << std::setw(7) << std::right << percent(d.updated, checks) << "% ";
+            std::cout << std::setw(7) << std::right << percent(not_found, checks) << "% ";
+            std::cout << std::setw(12) << std::right << d.inserted << " ";
+            std::cout << std::setw(7) << std::right << ((checks == 0) ? 0.0 : (static_cast<double>(d.pruned) / d.inserted)) << std::endl;
+        }
     }
 };
 

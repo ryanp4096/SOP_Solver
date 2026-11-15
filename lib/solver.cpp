@@ -12,10 +12,6 @@ static vector<solver_thread> solvers{};
 //////Runtime Parameters (Read Only)/////
 // from command line arguments
 static int thread_total = 0; // number of threads to use for B&B enumeration (not counting the LKH thread)
-static int numberOfTimesLKHPathProcessed = 0;
-static atomic<unsigned long long> not_best_suffix_count(0);
-static atomic<int> numberOfTimesBestSuffixEntryUpdated(0);
-static atomic<int> numberOfTimesBetterThanLKH(0);
 int instance_size;
 // from config file
 static int t_limit = 0;          // time limit, in seconds
@@ -580,7 +576,6 @@ void solver::solve()
         if (LKH_thread.joinable())
             LKH_thread.join();
     
-    std::cout << "Not Best Suffix: " << not_best_suffix_count.load() << endl;
     if (enable_manual_match_check) {
         vector<unsigned long long> match_actions_sum = vector<unsigned long long>(node_action_count);
         vector<unsigned long long> no_match_actions_sum = vector<unsigned long long>(node_action_count);
@@ -614,46 +609,40 @@ void solver::solve()
         std::cout << "Enumerated Nodes Before LKH Processed: " << nodes_before_lkh_processed_sum << endl;
     }
 
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->nodes.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->prefixes.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->subpaths.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->history_table.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->thread_stopping.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->work_stealing.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
     global_stats->cpu_timer.print_results();
-    std::cout << "--------------------------------------------------" << std::endl;
-
-    std::cout << "Best Tour: ";
-    for (int x : best_solution) {
-        std::cout << x << ", ";
-    }
-    std::cout << endl;
-
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << "WORK DONE" << std::endl;
+    print_workdone();
     auto total_time = chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    std::cout << "------------------------" << thread_count << " thread"
-              << "------------------------------" << std::endl;
-
-    std::cout << "Number of times LKH path was processed: " << numberOfTimesLKHPathProcessed << endl;
-    // std::cout << "Number of times Best suffix entry added: " << numberOfTimesBestSuffixEntryAdded << endl;
-    std::cout << "Number of times Best suffix entry updated: " << numberOfTimesBestSuffixEntryUpdated.load() << endl;
-    std::cout << "Number of times BB found prefix cost better than LKH: " << numberOfTimesBetterThanLKH.load() << endl;
-
     double percent_time_active = (((double)total_time / 1000000) * 32 - global_stats->work_stealing.total_time_stealing()) / ((double)total_time / 1000000 * 32);
     std::cout << "active time: " << percent_time_active << endl;
+    std::cout << "----------------------------------------------------------------------------------------------------" << std::endl;
 
-    std::cout << "best_cost: " << best_cost << "," << setprecision(4) << total_time / (float)(1000000) << std::endl
-              << std::endl;
+    std::cout << "Best Tour:  ";
+    for (size_t i = 0; i < best_solution.size(); i++) {
+        std::cout << best_solution[i];
+        if (i < best_solution.size() - 1) std::cout << ", ";
+    }
+    std::cout << std::endl;
 
-    print_workdone();
+    std::cout << "Best Cost:  " << best_cost << std::endl;
 
-    cout << "[Memory] Maximum memory used: " << getPeakMemoryUsage() / 1048576 << " MB" << endl;
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Final Time: " << (total_time / static_cast<float>(1000000)) << std::endl;
+
 
     // cout << "[Memory] Memory Info Lookups: " << getMemoryLookupCount() << endl;
     // to count the number of entries at different level in history table and their references
@@ -1172,7 +1161,6 @@ void solver_thread::processBestTour()
         localBestTour[i] = lkh_best_tour[i] - 1; // Copy the lkh tour (shift by 1 to convert from 1-indexed to 0-indexed)
 
     std::cout << "[processBestTour] Processing Best Tour with cost: " << total_cost << std::endl;
-    numberOfTimesLKHPathProcessed++;
     // Release Sol_lock after copying
     pthread_mutex_unlock(&Sol_lock);
     // Now print the copied tour
@@ -2325,11 +2313,12 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
     Hash128 hash = problem_state.hash;
     hash = hasher.toggle_bit(hash, taken_node);
     hash = hasher.change_last_node(hash, source_node, taken_node);
+    size_t depth = problem_state.current_path.size();
     stats.prefixes.checks++;
 
     stats.cpu_timer.prefix_history_lookup.start_timer();
     history_table.retrieve_or_insert<PrefixEntry>(
-        hash, problem_state.current_path.size(),
+        hash, depth,
         [&](HistoryOutcome outcome, PrefixEntry *entry){
             collect_history_stats(outcome);
             switch (outcome) {
@@ -2340,11 +2329,13 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
                     entry->active_thread = thread_id;
                     stats.prefixes.not_found++;
                     stats.prefixes.inserted++;
+                    stats.prefixes.by_depth[depth].inserted++;
                     break;
 
                 case HistoryOutcome::NotInserted:
                     stats.prefixes.not_found++;
                     stats.prefixes.not_inserted++;
+                    stats.prefixes.by_depth[depth].not_inserted++;
                     break;
 
                 case HistoryOutcome::Found:
@@ -2353,12 +2344,14 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
                     if (prefix_cost > entry->cost || (entry->state != HistoryState::UNEXPLORED && prefix_cost == entry->cost)) {
                         /* History entry is better than the current path: prune */
                         stats.prefixes.pruned++;
+                        stats.prefixes.by_depth[depth].pruned++;
                         stats.nodes.prune_prefix_history++;
                         pruned = true;
 
                     } else {
                         /* Current path is better than history entry: update entry */
                         stats.prefixes.updated++;
+                        stats.prefixes.by_depth[depth].updated++;
 
                         if (entry->state == HistoryState::EXPLORING && enable_threadstop) {
                             /* Stop inferior thread */
@@ -2457,7 +2450,6 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
         if (length < 4) continue;
 
         stats.subpaths.checks++;
-        stats.subpaths.by_depth[length].checks++;
 
         /* Retrieve subpath from subpath history table */
         stats.cpu_timer.subpath_history_lookup.start_timer();
@@ -2470,13 +2462,13 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
                         entry->cost = subpath_cost;
                         stats.subpaths.not_found++;
                         stats.subpaths.inserted++;
-                        stats.subpaths.by_depth[length].checks_no_match++;
+                        stats.subpaths.by_depth[length].inserted++;
                         break;
 
                     case HistoryOutcome::NotInserted:
                         stats.subpaths.not_found++;
                         stats.subpaths.not_inserted++;
-                        stats.subpaths.by_depth[length].checks_no_match++;
+                        stats.subpaths.by_depth[length].not_inserted++;
                         break;
 
                     case HistoryOutcome::Found:
@@ -2485,19 +2477,19 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
                             /* Better subpath found in history table, prune */
                             pruned = true;
                             stats.subpaths.pruned++;
-                            stats.subpaths.by_depth[length].checks_pruned++;
+                            stats.subpaths.by_depth[length].pruned++;
 
                         } else if (subpath_cost < entry->cost) {
                             /* This subpath is better than the one in history table, so update history table */
                             entry->cost = subpath_cost;
                             // TODO stop inferior threads
                             stats.subpaths.updated++;
-                            stats.subpaths.by_depth[length].checks_improved++;
+                            stats.subpaths.by_depth[length].updated++;
 
                         } else {
                             /* This subpath is equal to the one in history table. Both need to be explored, so can't prune or thread stop */
                             stats.subpaths.equal++;
-                            stats.subpaths.by_depth[length].checks_equal++;
+                            stats.subpaths.by_depth[length].equal++;
                         }
                         break;
                 }

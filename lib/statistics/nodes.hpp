@@ -109,15 +109,21 @@ struct stats_nodes {
             std::cout << "!! ERROR: Miscount: " << remaining << " remaining nodes != " << totals.recursive << " recursive nodes\n";
 
 
-        std::cout << "By Depth:\n";
+        std::cout << std::setw(9) << std::left << "By Depth:" << " ";
+        std::cout << std::setw(12) << std::right << "Enumerated" << " ";
+        std::cout << std::setw(12) << std::right << "Ready" << " ";
+        if (totals.ready != totals.popped)
+            std::cout << std::setw(12) << std::right << "Popped" << " ";
+        std::cout << std::setw(12) << std::right << "Recursive" << "\n";
+        
         for (unsigned d = 1; d <= instance_size; d++) {
             const stats_nodes_depth &depth = totals.by_depth[d];
-            std::cout << "    [" << d << "]";
-            std::cout << "  Enumerated: " << depth.enumerated;
-            std::cout << ", Ready: " << depth.ready;
+            std::cout << std::setw(9) << std::left << "    [" + std::to_string(d) + "]" << " ";
+            std::cout << std::setw(12) << std::right << depth.enumerated << " ";
+            std::cout << std::setw(12) << std::right << depth.ready << " ";
             if (totals.ready != totals.popped || depth.ready != depth.popped)
-                std::cout << ", Popped: " << depth.popped;
-            std::cout << ", Recursive: " << depth.recursive << std::endl;
+                std::cout << std::setw(12) << std::right << depth.popped << " ";
+            std::cout << std::setw(12) << std::right << depth.recursive << std::endl;
         }
     }
 };
