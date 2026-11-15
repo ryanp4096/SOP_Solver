@@ -10,10 +10,12 @@
 #include <array>
 #include <cstdint>
 #include <cstddef>
+#include <utility>
 
 #include "hash.hpp"
 #include "memory.hpp"
 #include "entries.hpp"
+#include "lock.hpp"
 
 /* Change number of entries stored in each bucket */
 constexpr size_t slots_per_bucket = 4;
@@ -39,6 +41,7 @@ using HashCheck = std::array<uint32_t, 3>;
  */
 struct alignas(64) HistoryBucket {    
     uint8_t lock_byte;                                  // 0 = unlocked, 1 = locked
+    uint8_t entry_count;
     uint16_t occupied_slot_mask;                         // 1 bit for each slot, 1 = occupied, 0 = empty
     HashCheck hash_checks[slots_per_bucket];            // the lower 96 bits of the hash of the entry stored in each slot
     HistoryEntryMetadata metadata[slots_per_bucket];    // extra data to choose which entry to replace when bucket is full
@@ -95,32 +98,6 @@ private:
     size_t bucket_count;            // Number of buckets in table
     HistoryBucket *buckets;         // Pointer to memory storing table
 
-    /**
-     * Lock for history table buckets.
-     * Locks when constructed, releases when destroyed.
-     */
-    class BucketLock {
-    private:
-        uint8_t* lock_byte;
-    public:
-        explicit BucketLock(HistoryBucket& bucket) : lock_byte(&bucket.lock_byte) {
-            for (;;) {
-                // Try to take the lock with one atomic exchange
-                if (__atomic_exchange_n(lock_byte, static_cast<uint8_t>(1), __ATOMIC_ACQUIRE) == 0)
-                    return;
-                
-                // Someone else holds it. Spin with plain reads, which keep the cache
-                // line shared instead of fighting over ownership, until it looks free
-                while (__atomic_load_n(lock_byte, __ATOMIC_RELAXED) != 0)
-                    _mm_pause();
-            }
-        }
-        ~BucketLock() {
-            __atomic_store_n(lock_byte, static_cast<uint8_t>(0), __ATOMIC_RELEASE);
-        }
-    };
-
-
 public:
     /**
      * Create a new history table.
@@ -171,19 +148,41 @@ public:
      */
     template <class EntryType, class Callback>
     HistoryOutcome retrieve_or_insert(Hash128 hash, size_t depth, Callback&& callback, HistoryReference *reference = nullptr) {
-        size_t bucket_index = hash_to_bucket(hash);
-        HistoryBucket &bucket = buckets[bucket_index];
-        HashCheck check = hash_to_check(hash);
-        BucketLock lock(bucket); // Locks bucket, automatically unlocks on return
+        size_t bucket_index1 = hash_to_bucket(hash);
+        size_t bucket_index2 = other_bucket(bucket_index1, hash);
+        HistoryBucket &bucket1 = buckets[bucket_index1];
+        HistoryBucket &bucket2 = buckets[bucket_index2];
 
-        int slot = search_bucket(bucket, check);
+        size_t lower_index = bucket_index1; size_t higher_index = bucket_index2;
+        if (lower_index > higher_index) std::swap(lower_index, higher_index);
+        HistoryBucket &lower_bucket = buckets[lower_index];
+        HistoryBucket &higher_bucket = buckets[higher_index];
+
+        HashCheck check = hash_to_check(hash);
+        BucketDoubleLock lock(&lower_bucket.lock_byte, &higher_bucket.lock_byte); // Locks lower bucket, locks higher bucket later. Both locks release on return
+
+        int slot = search_bucket(lower_bucket, check);
         if (slot >= 0) {
-            // Entry found in bucket
-            callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
-            if (reference) *reference = {bucket_index, slot, check};
+            // Entry found in lower bucket
+            callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&lower_bucket.entries[slot]));
+            if (reference) *reference = {lower_index, slot, check};
             return HistoryOutcome::Found;
         }
 
+        if (lower_index != higher_index) {
+            lock.lock_second();
+            slot = search_bucket(higher_bucket, check);
+            if (slot >= 0) {
+                // Entry found in bucket 2
+                callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&higher_bucket.entries[slot]));
+                if (reference) *reference = {higher_index, slot, check};
+                return HistoryOutcome::Found;
+            }
+        }
+
+        size_t bucket_index = bucket1.entry_count < bucket2.entry_count ? bucket_index1 : bucket_index2;
+        HistoryBucket &bucket = buckets[bucket_index];
+        
         const unsigned free_slot_mask = ~static_cast<unsigned>(bucket.occupied_slot_mask) & all_slots_mask;
         if (free_slot_mask == 0) {
             // No free slots
@@ -195,6 +194,7 @@ public:
         slot = __builtin_ctz(free_slot_mask); // First bit equal to 1 in free mask
         bucket.hash_checks[slot] = check;
         bucket.occupied_slot_mask |= static_cast<uint16_t>(1u << slot);
+        bucket.entry_count++;
         bucket.metadata[slot].depth = depth;
         callback(HistoryOutcome::Inserted, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
         if (reference) *reference = {bucket_index, slot, check};
@@ -214,7 +214,7 @@ public:
         if (!reference.exists()) return false;
 
         HistoryBucket &bucket = buckets[reference.bucket];
-        BucketLock lock(bucket); // Locks bucket until return
+        BucketLock lock(&bucket.lock_byte); // Locks bucket until return
 
         if (bucket.hash_checks[reference.slot] == reference.check) {
             callback(true, reinterpret_cast<EntryType *>(&bucket.entries[reference.slot]));
@@ -267,6 +267,25 @@ private:
         // converts high bits of hash from range [0, 2^64) to range [0, bucket_count)
         // this code is equivalent to high_bits * (bucket_count / 2^64)
         return static_cast<uint64_t>((static_cast<unsigned __int128>(hash.high) * bucket_count) >> 64);
+    }
+
+    /**
+     * Get other bucket from one bucket
+     */
+    size_t other_bucket(size_t bucket, Hash128 hash) const {
+        size_t hash_bits =  static_cast<uint64_t>((static_cast<unsigned __int128>(hash.low) * bucket_count) >> 64);
+        if (hash_bits < bucket) hash_bits += bucket_count;
+        return hash_bits - bucket;
+    }
+
+    /**
+     * Get buckets
+     */
+    std::array<size_t, 2> get_buckets(Hash128 hash) const {
+        size_t b1 = hash_to_bucket(hash);
+        size_t b2 = other_bucket(b1, hash);
+        if (b1 <= b2) return {b1, b2};
+        else return {b2, b1};
     }
 
     /**
