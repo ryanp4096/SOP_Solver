@@ -1328,8 +1328,8 @@ void solver_thread::processBestTour()
                 }
 
                 if (enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
-                    history_table.retrieve_or_insert<PrefixEntry>(
-                        subpath_hash, static_cast<size_t>(depth),
+                    history_table.retrieve_or_insert_prefix(
+                        subpath_hash, static_cast<size_t>(depth), thread_id,
                         [&](HistoryOutcome outcome, PrefixEntry *entry) {
                             collect_history_stats(outcome);
                             switch (outcome) {
@@ -1398,8 +1398,8 @@ void solver_thread::processBestTour()
                 if (enable_process_lkh_best_tour && enable_process_lkh_subpaths) {
                     subpath_stats.total++;
 
-                    history_table.retrieve_or_insert<SubpathEntry>(
-                        subpath_hash, static_cast<size_t>(depth),
+                    history_table.retrieve_or_insert_subpath(
+                        subpath_hash, static_cast<size_t>(depth), thread_id,
                         [&](HistoryOutcome outcome, SubpathEntry *entry) {
                             collect_history_stats(outcome);
                             switch (outcome) {
@@ -1436,8 +1436,8 @@ void solver_thread::processBestTour()
         if (enable_process_lkh_best_tour) {
             prefix_stats.total++;
 
-            history_table.retrieve_or_insert<PrefixEntry>(
-                prefix_hash, static_cast<size_t>(depth),
+            history_table.retrieve_or_insert_prefix(
+                prefix_hash, static_cast<size_t>(depth), thread_id,
                 [&](HistoryOutcome outcome, PrefixEntry *entry) {
                     collect_history_stats(outcome);
                     switch (outcome) {
@@ -2317,8 +2317,8 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
     stats.prefixes.checks++;
 
     stats.cpu_timer.prefix_history_lookup.start_timer();
-    history_table.retrieve_or_insert<PrefixEntry>(
-        hash, depth,
+    history_table.retrieve_or_insert_prefix(
+        hash, depth, thread_id,
         [&](HistoryOutcome outcome, PrefixEntry *entry){
             collect_history_stats(outcome);
             switch (outcome) {
@@ -2453,8 +2453,8 @@ bool solver_thread::subpath_history_utilization(const std::vector<int> &path) {
 
         /* Retrieve subpath from subpath history table */
         stats.cpu_timer.subpath_history_lookup.start_timer();
-        history_table.retrieve_or_insert<SubpathEntry>(
-            hash, static_cast<size_t>(length),
+        history_table.retrieve_or_insert_subpath(
+            hash, static_cast<size_t>(length), thread_id, 
             [&](HistoryOutcome outcome, SubpathEntry *entry) {
                 collect_history_stats(outcome);
                 switch (outcome) {

@@ -36,11 +36,25 @@ struct SubpathEntry {
     uint32_t active_threads;    // bitmask of threads exploring a path that contains this subpath
 };
 
+/* Compact format to store entry type (prefix/subpath and depth) */
+struct HistoryEntryType {
+private:
+    int16_t data;
+public:
+    HistoryEntryType(bool is_subpath, size_t depth)
+        // : data{static_cast<uint16_t>((depth << 1) & static_cast<size_t>(is_subpath))} {}
+        : data{static_cast<int16_t>(depth * (is_subpath ? -1 : 1))} {}
+
+    // inline bool is_subpath() { return static_cast<bool>(static_cast<unsigned>(data) & 1u); }
+    // inline size_t depth() { return static_cast<size_t>(data) >> 1; }
+    inline bool is_subpath() { return data < 0; }
+    inline size_t depth() { return std::abs(data); }
+};
 
 /* Extra data on each entry used to choose which entry to replace when bucket is full */
 struct HistoryEntryMetadata {
-    int16_t depth;              // depth of prefix/subpath
-    inline bool is_subpath() { return depth < 0; } // negative depth is used to indicate entry is a subpath
+    HistoryEntryType type;      // contains is_subpath and depth in compact format
+    uint16_t hits;              // times entry has been requested
 };
 
 

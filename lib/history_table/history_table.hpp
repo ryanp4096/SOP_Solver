@@ -5,8 +5,6 @@
 #ifndef HISTORY_TABLE_H
 #define HISTORY_TABLE_H
 
-#include <immintrin.h>
-
 #include <array>
 #include <cstdint>
 #include <cstddef>
@@ -16,41 +14,8 @@
 #include "memory.hpp"
 #include "entries.hpp"
 #include "lock.hpp"
-
-/* Change number of entries stored in each bucket */
-constexpr size_t slots_per_bucket = 4;
-
-constexpr size_t history_entry_size = std::max(sizeof(PrefixEntry), sizeof(SubpathEntry));
-constexpr size_t history_entry_align = std::max(alignof(PrefixEntry), alignof(SubpathEntry));
-
-
-/* Generic history entry, can store either prefix or subpath */
-struct alignas(history_entry_align) HistoryEntryTemplate {
-    char padding[history_entry_size];
-};
-
-
-/* Stores lower 96 bits of 128-bit hash to check if key matches entry */
-using HashCheck = std::array<uint32_t, 3>;
-
-
-/**
- * Represents a bucket in the history table. A bucket stores 4 history entries by default.
- * The upper 32 bits of the 128-bit hash of the history key are used to determine which
- * bucket a key will be found in.
- */
-struct alignas(64) HistoryBucket {    
-    uint8_t lock_byte;                                  // 0 = unlocked, 1 = locked
-    uint8_t entry_count;
-    uint16_t occupied_slot_mask;                         // 1 bit for each slot, 1 = occupied, 0 = empty
-    HashCheck hash_checks[slots_per_bucket];            // the lower 96 bits of the hash of the entry stored in each slot
-    HistoryEntryMetadata metadata[slots_per_bucket];    // extra data to choose which entry to replace when bucket is full
-    HistoryEntryTemplate entries[slots_per_bucket];     // the entries in the bucket
-};
-
-
-/* Each bucket is aligned to fit on a certain number of 64-byte cache lines */
-constexpr size_t cache_lines_per_bucket = sizeof(HistoryBucket) / 64;
+#include "buckets.hpp"
+#include "expansion.hpp"
 
 
 /* The outcome of the retrieve operation */
@@ -93,10 +58,12 @@ struct HistoryReference {
 class HistoryTable {
 private:
     static constexpr unsigned all_slots_mask = (1u << slots_per_bucket) - 1;
+    static constexpr unsigned all_expansion_slots_mask = (1u << slots_per_expansion) - 1;
 
     HistoryTableMemory memory;      // Memory block for history table
     size_t bucket_count;            // Number of buckets in table
     HistoryBucket *buckets;         // Pointer to memory storing table
+    ExpansionManager expansion_manager;     // Manager for expanding buckets
 
 public:
     /**
@@ -105,8 +72,13 @@ public:
      */
     explicit HistoryTable(HistoryTableMemoryOptions options = {})
           : memory(options),
-            bucket_count(memory.get_memory_bytes() / sizeof(HistoryBucket)),
-            buckets(reinterpret_cast<HistoryBucket *>(memory.get_memory_start()))
+            bucket_count(static_cast<size_t>(memory.get_memory_bytes() * (1 - expansion_space)) / sizeof(HistoryBucket)),
+            buckets(reinterpret_cast<HistoryBucket *>(memory.get_memory_start())),
+            expansion_manager(
+                reinterpret_cast<HistoryExpansion *>(&buckets[bucket_count]),
+                static_cast<size_t>(memory.get_memory_bytes() * expansion_space) / sizeof(HistoryExpansion),
+                options.thread_count
+            )
             {}
 
     /**
@@ -147,7 +119,52 @@ public:
      * @return Whether the entry was found or inserted
      */
     template <class EntryType, class Callback>
-    HistoryOutcome retrieve_or_insert(Hash128 hash, size_t depth, Callback&& callback, HistoryReference *reference = nullptr) {
+    HistoryOutcome retrieve_or_insert_one_bucket(Hash128 hash, size_t depth, bool is_subpath, Callback&& callback, HistoryReference *reference = nullptr) {
+        size_t bucket_index = hash_to_bucket(hash);
+        HistoryBucket &bucket = buckets[bucket_index];
+        HashCheck check = hash_to_check(hash);
+        BucketLock lock(&bucket.lock_byte); // Locks bucket, automatically unlocks on return
+
+        int slot = search_bucket(bucket, check);
+        if (slot >= 0) {
+            // Entry found in bucket
+            bucket.metadata[slot].hits++;
+            callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
+            if (reference) *reference = {bucket_index, slot, check};
+            return HistoryOutcome::Found;
+        }
+
+        const unsigned free_slot_mask = ~static_cast<unsigned>(bucket.occupied_slot_mask) & all_slots_mask;
+        if (free_slot_mask == 0) {
+            // No free slots
+            callback(HistoryOutcome::NotInserted, nullptr);
+            return HistoryOutcome::NotInserted;
+        }
+
+        // Insert in first free slot
+        slot = __builtin_ctz(free_slot_mask); // First bit equal to 1 in free mask
+        bucket.hash_checks[slot] = check;
+        bucket.occupied_slot_mask |= static_cast<uint16_t>(1u << slot);
+        bucket.entry_count++;
+        bucket.metadata[slot].type = HistoryEntryType(is_subpath, depth);
+        bucket.metadata[slot].hits = 1;
+        callback(HistoryOutcome::Inserted, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
+        if (reference) *reference = {bucket_index, slot, check};
+
+        return HistoryOutcome::Inserted;
+    }
+
+    /**
+     * Look up a key in the table. If absent, insert the key into the table.
+     * @param hash The hash to search for
+     * @param callback A function to run immediately after retrieving/inserting,
+     *                 while lock is still held, for quick operations only
+     * @param reference Optional return variable. A pointer to a HistoryReference to store a reference to the
+     *                  location of the retrieved/inserted entry for future access
+     * @return Whether the entry was found or inserted
+     */
+    template <class EntryType, class Callback>
+    HistoryOutcome retrieve_or_insert_two_bucket(Hash128 hash, size_t depth, bool is_subpath, Callback&& callback, HistoryReference *reference = nullptr) {
         size_t bucket_index1 = hash_to_bucket(hash);
         size_t bucket_index2 = other_bucket(bucket_index1, hash);
         HistoryBucket &bucket1 = buckets[bucket_index1];
@@ -164,6 +181,7 @@ public:
         int slot = search_bucket(lower_bucket, check);
         if (slot >= 0) {
             // Entry found in lower bucket
+            lower_bucket.metadata[slot].hits++;
             callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&lower_bucket.entries[slot]));
             if (reference) *reference = {lower_index, slot, check};
             return HistoryOutcome::Found;
@@ -174,6 +192,7 @@ public:
             slot = search_bucket(higher_bucket, check);
             if (slot >= 0) {
                 // Entry found in bucket 2
+                higher_bucket.metadata[slot].hits++;
                 callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&higher_bucket.entries[slot]));
                 if (reference) *reference = {higher_index, slot, check};
                 return HistoryOutcome::Found;
@@ -195,12 +214,111 @@ public:
         bucket.hash_checks[slot] = check;
         bucket.occupied_slot_mask |= static_cast<uint16_t>(1u << slot);
         bucket.entry_count++;
-        bucket.metadata[slot].depth = depth;
+        bucket.metadata[slot].type = HistoryEntryType(is_subpath, depth);
+        bucket.metadata[slot].hits = 1;
         callback(HistoryOutcome::Inserted, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
         if (reference) *reference = {bucket_index, slot, check};
 
         return HistoryOutcome::Inserted;
     }
+
+    /**
+     * Look up a key in the table. If absent, insert the key into the table.
+     * @param hash The hash to search for
+     * @param callback A function to run immediately after retrieving/inserting,
+     *                 while lock is still held, for quick operations only
+     * @param reference Optional return variable. A pointer to a HistoryReference to store a reference to the
+     *                  location of the retrieved/inserted entry for future access
+     * @return Whether the entry was found or inserted
+     */
+    template <class EntryType, class Callback>
+    HistoryOutcome retrieve_or_insert_expand(Hash128 hash, size_t depth, bool is_subpath, size_t thread_id, Callback&& callback, HistoryReference *reference = nullptr) {
+        size_t bucket_index = hash_to_bucket(hash);
+        HistoryBucket &bucket = buckets[bucket_index];
+        HashCheck check = hash_to_check(hash);
+        BucketLock lock(&bucket.lock_byte); // Locks bucket, automatically unlocks on return
+
+        int slot = search_bucket(bucket, check);
+        if (slot >= 0) {
+            // Entry found in bucket
+            bucket.metadata[slot].hits++;
+            callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
+            if (reference) *reference = {bucket_index, slot, check};
+            return HistoryOutcome::Found;
+        }
+        HistoryExpansion *expansion = bucket.expansion;
+        int slot_shift = slots_per_bucket;
+        while (expansion != nullptr) {
+            int slot = search_expansion(*expansion, check);
+            if (slot >= 0) {
+                expansion->metadata[slot].hits++;
+                callback(HistoryOutcome::Found, reinterpret_cast<EntryType *>(&expansion->entries[slot]));
+                if (reference) *reference = {bucket_index, slot_shift + slot, check};
+                return HistoryOutcome::Found;
+            }
+            expansion = expansion->expansion;
+            slot_shift += slots_per_expansion;
+        }
+
+        unsigned entry_count = bucket.entry_count;
+        if (entry_count < slots_per_bucket) {
+            const unsigned free_slot_mask = ~static_cast<unsigned>(bucket.occupied_slot_mask) & all_slots_mask;
+            slot = __builtin_ctz(free_slot_mask); // First bit equal to 1 in free mask
+            bucket.hash_checks[slot] = check;
+            bucket.occupied_slot_mask |= static_cast<uint16_t>(1u << slot);
+            bucket.entry_count++;
+            bucket.metadata[slot].type = HistoryEntryType(is_subpath, depth);
+            bucket.metadata[slot].hits = 1;
+            callback(HistoryOutcome::Inserted, reinterpret_cast<EntryType *>(&bucket.entries[slot]));
+            if (reference) *reference = {bucket_index, slot, check};
+            return HistoryOutcome::Inserted;
+        }
+        if (bucket.expansion == nullptr) {
+            bucket.expansion = expansion_manager.allocate_expansion(thread_id);
+            if (bucket.expansion == nullptr) {
+                // No free slots
+                callback(HistoryOutcome::NotInserted, nullptr);
+                return HistoryOutcome::NotInserted;
+            }
+        }
+        slot_shift = slots_per_bucket;
+        entry_count -= slots_per_bucket;
+        expansion = bucket.expansion;
+        while (entry_count >= slots_per_expansion) {
+            if (expansion->expansion == nullptr) {
+                expansion->expansion = expansion_manager.allocate_expansion(thread_id);
+                if (expansion->expansion == nullptr) {
+                    // No free slots
+                    callback(HistoryOutcome::NotInserted, nullptr);
+                    return HistoryOutcome::NotInserted;
+                }
+            }
+            expansion = expansion->expansion;
+            entry_count -= slots_per_expansion;
+            slot_shift += slots_per_expansion;
+        }
+        const unsigned free_slot_mask = ~static_cast<unsigned>(expansion->occupied_slot_mask) & all_expansion_slots_mask;
+        slot = __builtin_ctz(free_slot_mask); // First bit equal to 1 in free mask
+        expansion->hash_checks[slot] = check;
+        expansion->occupied_slot_mask |= static_cast<uint16_t>(1u << slot);
+        bucket.entry_count++;
+        expansion->metadata[slot].type = HistoryEntryType(is_subpath, depth);
+        expansion->metadata[slot].hits = 1;
+        callback(HistoryOutcome::Inserted, reinterpret_cast<EntryType *>(&expansion->entries[slot]));
+        if (reference) *reference = {bucket_index, slot_shift + slot, check};
+        return HistoryOutcome::Inserted;
+    }
+
+    template <class Callback>
+    HistoryOutcome retrieve_or_insert_prefix(Hash128 hash, size_t depth, size_t thread_id, Callback&& callback, HistoryReference *reference = nullptr) {
+        return retrieve_or_insert_expand<PrefixEntry>(hash, depth, false, thread_id, callback, reference);
+    }
+
+    template <class Callback>
+    HistoryOutcome retrieve_or_insert_subpath(Hash128 hash, size_t depth, size_t thread_id, Callback&& callback, HistoryReference *reference = nullptr) {
+        return retrieve_or_insert_expand<SubpathEntry>(hash, depth, true, thread_id, callback, reference);
+    }
+
 
     /**
      * Update a previously found or inserted entry from retrieve_or_insert.
@@ -216,12 +334,28 @@ public:
         HistoryBucket &bucket = buckets[reference.bucket];
         BucketLock lock(&bucket.lock_byte); // Locks bucket until return
 
-        if (bucket.hash_checks[reference.slot] == reference.check) {
-            callback(true, reinterpret_cast<EntryType *>(&bucket.entries[reference.slot]));
-            return true;
+        if (reference.slot < static_cast<int>(slots_per_bucket)) {
+            if (bucket.hash_checks[reference.slot] == reference.check) {
+                callback(true, reinterpret_cast<EntryType *>(&bucket.entries[reference.slot]));
+                return true;
+            } else {
+                callback(false, nullptr);
+                return false;
+            }
         } else {
-            callback(false, nullptr);
-            return false;
+            int slot = reference.slot - slots_per_bucket;
+            HistoryExpansion *expansion = bucket.expansion;
+            while (expansion != nullptr && slot >= static_cast<int>(slots_per_expansion)) {
+                expansion = expansion->expansion;
+                slot -= slots_per_expansion;
+            }
+            if (expansion == nullptr || expansion->hash_checks[slot] != reference.check) {
+                callback(false, nullptr);
+                return false;
+            } else {
+                callback(true, reinterpret_cast<EntryType *>(&expansion->entries[slot]));
+                return true;
+            }
         }
     }
 
@@ -232,10 +366,38 @@ public:
     std::vector<size_t> bucket_distribution() const {
         std::vector<size_t> distribution(slots_per_bucket + 1, 0);
         for (size_t i = 0; i < bucket_count; i++) {
-            size_t entries = __builtin_popcount(static_cast<uint32_t>(buckets[i].occupied_slot_mask));
+            size_t entries = buckets[i].entry_count;
+            if (entries >= distribution.size()) {
+                distribution.resize(entries + 1);
+            }
             distribution[entries]++;
         }
         return distribution;
+    }
+
+    /**
+     * Diagnostic: distribution of how many times each entry is hit
+     */
+    std::pair<std::vector<size_t>, std::vector<size_t>> hit_distribution() const {
+        std::vector<size_t> prefix_dist(16, 0);
+        std::vector<size_t> subpath_dist(16, 0);
+        for (size_t i = 0; i < bucket_count; i++) {
+            unsigned slot_mask = buckets[i].occupied_slot_mask;
+            while (slot_mask != 0) {
+                int j = __builtin_ctz(slot_mask);
+
+                unsigned hits = buckets[i].metadata[j].hits;
+                int block = hits ? (31 - __builtin_clz(hits)) : 0;
+
+                if (buckets[i].metadata[j].type.is_subpath())
+                    subpath_dist[block]++;
+                else
+                    prefix_dist[block]++;
+
+                slot_mask &= slot_mask - 1;
+            }
+        }
+        return std::make_pair(prefix_dist, subpath_dist);
     }
 
 private:
@@ -251,6 +413,19 @@ private:
             int slot_index = __builtin_ctz(slot_mask);  // Get next occupied slot (first bit equal to 1)
             
             if (bucket.hash_checks[slot_index] == check)
+                return slot_index;
+            
+            slot_mask &= slot_mask - 1; // Move to next slot (clear first bit equal to 1)
+        }
+        return -1;
+    }
+
+    int search_expansion(const HistoryExpansion &expansion, const HashCheck &check) {
+        unsigned slot_mask = expansion.occupied_slot_mask;
+        while (slot_mask != 0) {
+            int slot_index = __builtin_ctz(slot_mask);  // Get next occupied slot (first bit equal to 1)
+            
+            if (expansion.hash_checks[slot_index] == check)
                 return slot_index;
             
             slot_mask &= slot_mask - 1; // Move to next slot (clear first bit equal to 1)
@@ -276,16 +451,6 @@ private:
         size_t hash_bits =  static_cast<uint64_t>((static_cast<unsigned __int128>(hash.low) * bucket_count) >> 64);
         if (hash_bits < bucket) hash_bits += bucket_count;
         return hash_bits - bucket;
-    }
-
-    /**
-     * Get buckets
-     */
-    std::array<size_t, 2> get_buckets(Hash128 hash) const {
-        size_t b1 = hash_to_bucket(hash);
-        size_t b2 = other_bucket(b1, hash);
-        if (b1 <= b2) return {b1, b2};
-        else return {b2, b1};
     }
 
     /**

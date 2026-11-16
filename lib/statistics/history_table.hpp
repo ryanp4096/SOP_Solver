@@ -68,6 +68,15 @@ struct stats_history_table {
             size_t b = dist[i];
             std::cout << "    Size " << i << ": " << b << " buckets (" << percent(b, buckets) << "%)" << std::endl;
         }
+
+        // auto dists = history_table.hit_distribution();
+        // auto &prefix_dist = dists.first;
+        // auto &subpath_dist = dists.second;
+        // std::cout << "Hit Distribution:\n";
+        // for (size_t block = 0; block < 16; block++) {
+        //     std::cout << "    " << (1u << block) << " - " << ((1u << (block + 1)) - 1) << " hits: ";
+        //     std::cout << prefix_dist[block] << " prefixes, " << subpath_dist[block] << " subpaths" << std::endl;
+        // }
     }
 };
 
