@@ -124,12 +124,13 @@ void local_pool_thread::start_ready_list()
     pool[depth].clear();
 }
 
-void local_pool_thread::push_to_ready_list(int taken_node, int lower_bound, const HistoryReference &history_reference, int cost)
+void local_pool_thread::push_to_ready_list(int taken_node, int lower_bound, const HistoryReference &history_reference, Hash128 hash, int cost)
 {
     pool[depth].push_back(taken_node, local_pool_node{
         .lower_bound = lower_bound,
+        .cost = cost,
         .history_reference = history_reference,
-        .cost = cost
+        .hash = hash
     });
 }
 
@@ -164,6 +165,7 @@ unsigned long long local_pool_thread::node_value()
 bool local_pool_thread::get(int depth, int last_node, local_pool_node_ref &result_node)
 {
     if (depth > this->depth) return false;
+    if (depth <= this->zero_depth) return false;
     return pool[depth - 1].get(last_node, result_node);
 }
 

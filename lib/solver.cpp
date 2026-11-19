@@ -1671,8 +1671,11 @@ void solver_thread::enumerate()
                 stats.cpu_timer.enumerate_node_start.stop_timer();
 
                 HistoryReference history_reference{};
+                Hash128 hash = problem_state.hash;
+                hash = hasher.toggle_bit(hash, taken_node);
+                hash = hasher.change_last_node(hash, source_node, taken_node);
                 stats.cpu_timer.enumerate_prefix_history.start_timer();
-                bool pruned = history_utilization(problem_state.history_key, problem_state.current_cost, &lower_bound, &taken, history_reference, source_node, taken_node);
+                bool pruned = history_utilization(hash, &lower_bound, &taken, history_reference, source_node, taken_node);
                 stats.cpu_timer.enumerate_prefix_history.stop_timer();
                 if (pruned) {
                     log_node(thread_id, problem_state, match_info, PRUNE_HISTORY);
@@ -1700,7 +1703,7 @@ void solver_thread::enumerate()
                 //"good" node, add it to the ready_list, then reset problem state
                 log_node(thread_id, problem_state, match_info, NOT_PRUNED);
                 local_pools->thread(thread_id).push_to_ready_list(
-                    taken_node, lower_bound, history_reference, problem_state.current_cost
+                    taken_node, lower_bound, history_reference, hash, problem_state.current_cost
                 );
                 ready_count++;
                 problem_state.current_path.pop_back();
@@ -2305,14 +2308,11 @@ int solver_thread::dynamic_hungarian(int src, int dst)
     return lb;
 }
 
-bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, HistoryReference &history_reference, int source_node, int taken_node)
+bool solver_thread::history_utilization(Hash128 hash, int *lowerbound, bool *found, HistoryReference &history_reference, int source_node, int taken_node)
 {
     int prefix_cost = problem_state.current_cost;
     bool pruned = false;
     *lowerbound = -1;
-    Hash128 hash = problem_state.hash;
-    hash = hasher.toggle_bit(hash, taken_node);
-    hash = hasher.change_last_node(hash, source_node, taken_node);
     size_t depth = problem_state.current_path.size();
     stats.prefixes.checks++;
 
@@ -2366,7 +2366,7 @@ bool solver_thread::history_utilization(HistoryKey &key, int cost, int *lowerbou
                                     {
                                         stats.thread_stopping.requests++;
                                         thread_requests[target_id].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
-                                                                                            entry->cost, target_id, key.bit_vector);
+                                                                                            entry->cost, target_id, hash);
                                         thread_requests[target_id].has_request = true;
                                     }
                                     thread_requests[target_id].lock.unlock();
@@ -2701,8 +2701,9 @@ bool solver_thread::check_stop_request(const local_pool_node_ref &active_node, b
     const request_packet &rp = thread_requests[thread_id].request;
 
     if (rp.target_depth == active_node.depth && rp.target_last_node == active_node.taken_node) {
+        // thread stop request for this node
         stats.thread_stopping.compared++;
-        if (active_node.cost() >= rp.target_prefix_cost && rp.key == local_pools->thread(thread_id).current_key) {
+        if (active_node.cost() >= rp.target_prefix_cost && active_node.hash() == rp.hash) {
             stats.thread_stopping.success++;
             thread_requests[thread_id].has_request = false;
             thread_requests[thread_id].lock.unlock();
@@ -2711,10 +2712,11 @@ bool solver_thread::check_stop_request(const local_pool_node_ref &active_node, b
         }
 
     } else if (rp.target_depth < active_node.depth && rp.target_last_node == problem_state.current_path[rp.target_depth - 1]) {
+        // thread stop request for a node earlier on this path
         stats.thread_stopping.compared++;
         local_pool_node_ref node;
         bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
-        if (found && node.cost() >= rp.target_prefix_cost && rp.key == node.bit_vector()) {
+        if (found && node.cost() >= rp.target_prefix_cost && node.hash() == rp.hash) {
             stats.thread_stopping.success++;
             *prefixKeyMatched = true;
             thread_requests[thread_id].has_request = false;
@@ -2724,6 +2726,18 @@ bool solver_thread::check_stop_request(const local_pool_node_ref &active_node, b
             stats.cpu_timer.thread_stop_check.stop_timer();
             return true; // Indicate that a stop request was found and handled
         }
+    // } else if (rp.target_depth <= active_node.depth) {
+    //     // thread stop request for another node in local pool
+    //     stats.thread_stopping.compared++;
+    //     local_pool_node_ref node;
+    //     bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
+    //     if (found && node.cost() >= rp.target_prefix_cost && node.hash() == rp.hash) {
+    //         node.cancel();
+    //         thread_requests[thread_id].has_request = false;
+    //         thread_requests[thread_id].lock.unlock();
+    //         stats.cpu_timer.thread_stop_check.stop_timer();
+    //         return false; // Request matched another local pool node, not the current path
+    //     }
     }
 
     thread_requests[thread_id].has_request = false;

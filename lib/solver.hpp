@@ -46,11 +46,11 @@ struct request_packet
     int target_depth;
     int target_prefix_cost;
     int target_thread;
-    boost::dynamic_bitset<> key;
-    request_packet() : target_last_node(0), target_depth(0), target_prefix_cost(0), target_thread(0), key() {}
+    Hash128 hash;
+    request_packet() : target_last_node(0), target_depth(0), target_prefix_cost(0), target_thread(0), hash() {}
     // Constructor matching the provided argument list
-    request_packet(int last_node, int depth, int prefix_cost, int thread, const boost::dynamic_bitset<> &key_bitset)
-        : target_last_node(last_node), target_depth(depth), target_prefix_cost(prefix_cost), target_thread(thread), key(key_bitset) {}
+    request_packet(int last_node, int depth, int prefix_cost, int thread, Hash128 hash)
+        : target_last_node(last_node), target_depth(depth), target_prefix_cost(prefix_cost), target_thread(thread), hash(hash) {}
 };
 
 struct thread_request
@@ -189,7 +189,7 @@ private:
      * @param destination (For hungarian) The last node in the current path
      * @return true if node can be pruned, false if node cannot be pruned
      */
-    bool history_utilization(HistoryKey &key, int cost, int *lowerbound, bool *found, HistoryReference &history_reference, int source, int destination);
+    bool history_utilization(Hash128 hash, int *lowerbound, bool *found, HistoryReference &history_reference, int source, int destination);
     
     /**
      * @brief Searches the subpath history table for all new subpaths at this node and prunes if any subpath is inferior to a previously explored subpath.

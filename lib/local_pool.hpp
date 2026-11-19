@@ -13,11 +13,13 @@
 
 class local_pool_thread;
 
-struct local_pool_node {
+struct alignas(64) local_pool_node {
     int lower_bound;
-    unsigned long long current_node_value;
-    HistoryReference history_reference;
     int cost;
+    unsigned long long current_node_value{0};
+    HistoryReference history_reference;
+    Hash128 hash;
+    bool cancelled{false};
 };
 
 struct local_pool_node_ref {
@@ -34,7 +36,10 @@ struct local_pool_node_ref {
     inline int lower_bound() const { return node->lower_bound; }
     inline unsigned long long current_node_value() const { return node->current_node_value; }
     inline HistoryReference &history_reference() const { return node->history_reference; }
+    inline Hash128 hash() const { return node->hash; }
     inline int cost() const { return node->cost; }
+    inline bool cancelled() const { return node->cancelled; }
+    inline void cancel() { node->cancelled = true; }
 
     std::vector<int> sequence() const;
     boost::dynamic_bitset<> bit_vector() const;
@@ -137,7 +142,7 @@ public:
     void start_ready_list();
 
     /* Pushes a new node to the ready list */
-    void push_to_ready_list(int taken_node, int lower_bound, const HistoryReference &history_reference, int cost);
+    void push_to_ready_list(int taken_node, int lower_bound, const HistoryReference &history_reference, Hash128 hash, int cost);
 
     /* Updates work remaining values of nodes in ready list */
     void update_ready_list_node_value(unsigned long long node_value) { pool[depth].set_node_value(node_value); }
