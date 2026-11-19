@@ -36,6 +36,7 @@
 #include "config.hpp"
 #include "memory.hpp"
 #include "statistics/stats.hpp"
+#include "thread_stopping.hpp"
 // #include "active_tree.hpp"
 // #include "precedence.hpp"
 

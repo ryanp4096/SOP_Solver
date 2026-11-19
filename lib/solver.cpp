@@ -77,7 +77,7 @@ static timer main_timer; // when solve_parallel started (before processing begin
 /////////////////////////////////////////
 
 ///////////Thread Stopping Variables/////
-static vector<thread_request> thread_requests(32);
+static ThreadStopping thread_stopping{};
 
 ///////////LKH Variables/////////////////
 thread LKH_thread;
@@ -1751,6 +1751,7 @@ void solver_thread::enumerate()
             stats.nodes.by_depth[active_node.depth].popped++;
             trace.write_node(active_node.taken_node);
 
+            stats.thread_stopping.rechecks_processed++;
             bool prune_thread_stop = false;
             history_table.update_entry<PrefixEntry>(
                 active_node.history_reference(),
@@ -1765,7 +1766,7 @@ void solver_thread::enumerate()
                 trace.write(static_cast<int>(false), 1);
                 work_remaining[thread_id] -= active_node.current_node_value();
                 stats.nodes.prune_thread_stop++;
-                stats.thread_stopping.cancel_schedule++;
+                stats.thread_stopping.rechecks_pruned++;
                 local_pools->thread(thread_id).deactivate();
                 continue;
             }
@@ -2358,19 +2359,18 @@ bool solver_thread::history_utilization(Hash128 hash, int *lowerbound, bool *fou
                             if (active_threads > 0 && entry->active_thread != thread_id)
                             {
                                 stats.cpu_timer.thread_stop_request.start_timer();
+                                stats.thread_stopping.reqs_attempted++;
                                 int target_id = entry->active_thread;
-                                if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size())
-                                {
-                                    thread_requests[target_id].lock.lock();
-                                    if (!thread_requests[target_id].has_request || thread_requests[target_id].request.target_depth > (int)problem_state.current_path.size()) // extra validation
-                                    {
-                                        stats.thread_stopping.requests++;
-                                        thread_requests[target_id].request = request_packet(problem_state.current_path.back(), (int)problem_state.current_path.size(),
-                                                                                            entry->cost, target_id, hash);
-                                        thread_requests[target_id].has_request = true;
+                                bool pushed = thread_stopping.targets[target_id].request(
+                                    thread_id,
+                                    ThreadStopPacket{
+                                        .first_node = 0,
+                                        .last_node = problem_state.current_path.back(),
+                                        .depth = static_cast<int>(problem_state.current_path.size()),
+                                        .hash = hash
                                     }
-                                    thread_requests[target_id].lock.unlock();
-                                }
+                                );
+                                if (pushed) stats.thread_stopping.reqs_pushed++;
                                 stats.cpu_timer.thread_stop_request.stop_timer();
                             }
                         }
@@ -2506,15 +2506,6 @@ static int stolen_from;
 // WORKSTEALING
 bool solver_thread::workload_request()
 {
-    if (thread_requests[thread_id].has_request)
-    {
-        thread_requests[thread_id].lock.lock();
-        if (thread_requests[thread_id].has_request)
-        {
-            thread_requests[thread_id].has_request = false;
-        }
-        thread_requests[thread_id].lock.unlock();
-    }
     if (work_remaining[thread_id] != 0)
     {
 
@@ -2687,63 +2678,36 @@ void solver_thread::print_state(sop_state &state)
 
 bool solver_thread::check_stop_request(const local_pool_node_ref &active_node, bool *prefixKeyMatched)
 {
-    if (!thread_requests[thread_id].has_request) return false;
-    
-    thread_requests[thread_id].lock.lock();
-    
-    if (!thread_requests[thread_id].has_request) {
-        thread_requests[thread_id].lock.unlock();
-        return false;
-    }
-
+    bool pruned = false;
+    stats.thread_stopping.queue_checks++;
     stats.cpu_timer.thread_stop_check.start_timer();
-    stats.thread_stopping.checks++;
-    const request_packet &rp = thread_requests[thread_id].request;
+    thread_stopping.targets[thread_id].process(
+        [&](const ThreadStopPacket &p) {
+            stats.thread_stopping.reqs_processed++;
+            if (p.depth == active_node.depth && p.last_node == active_node.taken_node) {
+                stats.thread_stopping.reqs_compared++;
+                if (p.hash == active_node.hash()) {
+                    stats.thread_stopping.reqs_pruned++;
+                    pruned = true;
+                }
 
-    if (rp.target_depth == active_node.depth && rp.target_last_node == active_node.taken_node) {
-        // thread stop request for this node
-        stats.thread_stopping.compared++;
-        if (active_node.cost() >= rp.target_prefix_cost && active_node.hash() == rp.hash) {
-            stats.thread_stopping.success++;
-            thread_requests[thread_id].has_request = false;
-            thread_requests[thread_id].lock.unlock();
-            stats.cpu_timer.thread_stop_check.stop_timer();
-            return true; // Indicate that a stop request was found and handled
+            } else if (p.depth < active_node.depth && p.last_node == problem_state.current_path[p.depth - 1]) {
+                stats.thread_stopping.reqs_compared++;
+                local_pool_node_ref node;
+                bool found = local_pools->thread(thread_id).get(p.depth, p.last_node, node);
+                if (found && p.hash == node.hash()) {
+                    stats.thread_stopping.reqs_pruned++;
+                    *prefixKeyMatched = true;
+                    pruned = true;
+                    if (p.depth < active_node.depth - 1 && (prune_to_depth == -1 || p.depth < prune_to_depth))
+                        prune_to_depth = p.depth;
+                }
+
+            }
         }
-
-    } else if (rp.target_depth < active_node.depth && rp.target_last_node == problem_state.current_path[rp.target_depth - 1]) {
-        // thread stop request for a node earlier on this path
-        stats.thread_stopping.compared++;
-        local_pool_node_ref node;
-        bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
-        if (found && node.cost() >= rp.target_prefix_cost && node.hash() == rp.hash) {
-            stats.thread_stopping.success++;
-            *prefixKeyMatched = true;
-            thread_requests[thread_id].has_request = false;
-            if (rp.target_depth < active_node.depth - 1)
-                prune_to_depth = rp.target_depth;
-            thread_requests[thread_id].lock.unlock();
-            stats.cpu_timer.thread_stop_check.stop_timer();
-            return true; // Indicate that a stop request was found and handled
-        }
-    // } else if (rp.target_depth <= active_node.depth) {
-    //     // thread stop request for another node in local pool
-    //     stats.thread_stopping.compared++;
-    //     local_pool_node_ref node;
-    //     bool found = local_pools->thread(thread_id).get(rp.target_depth, rp.target_last_node, node);
-    //     if (found && node.cost() >= rp.target_prefix_cost && node.hash() == rp.hash) {
-    //         node.cancel();
-    //         thread_requests[thread_id].has_request = false;
-    //         thread_requests[thread_id].lock.unlock();
-    //         stats.cpu_timer.thread_stop_check.stop_timer();
-    //         return false; // Request matched another local pool node, not the current path
-    //     }
-    }
-
-    thread_requests[thread_id].has_request = false;
-    thread_requests[thread_id].lock.unlock();
+    );
     stats.cpu_timer.thread_stop_check.stop_timer();
-    return false;
+    return pruned;
 }
  
 bool solver_thread::check_history_key_and_cost(const vector<int> &sequence, int depth, boost::dynamic_bitset<> &key, int target_prefix_cost)
